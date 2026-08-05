@@ -88,6 +88,8 @@ export type RecipeInput = {
   name: string;
   yieldPortions: number;
   category?: string | null;
+  /** Servicios del día para los que encaja (desayuno, almuerzo…). Se guarda en category. */
+  suitableServices?: ServiceType[];
   instructions?: string | null;
   estimatedCost?: number | null;
   ingredients: RecipeIngredientInput[];

@@ -23,6 +23,8 @@ import type {
   ShoppingList,
   Supplier,
 } from "./api";
+import { packRecipeCategory } from "../shared/recipeMeta";
+import { buildDemoPayload, markDemoSeeded } from "./demoSeed";
 
 const KEY = "catering-crm:v1";
 
@@ -189,6 +191,81 @@ function fail(message: string): never {
 
 export const local = {
   health: () => ({ ok: true, db: false }),
+
+  isEmpty(): boolean {
+    const store = read();
+    return (
+      store.clients.length === 0 &&
+      store.events.length === 0 &&
+      store.recipes.length === 0 &&
+      store.ingredients.length === 0
+    );
+  },
+
+  clearAll(): { ok: boolean } {
+    write(empty());
+    markDemoSeeded(false);
+    return { ok: true };
+  },
+
+  seedDemo(): { ok: boolean } {
+    if (!local.isEmpty()) {
+      fail("Ya hay datos. Borra primero si quieres cargar el ejemplo.");
+    }
+    const demo = buildDemoPayload();
+    const clients = demo.clients.map((c) => local.createClient(c));
+    const suppliers = demo.suppliers.map((s) => local.createSupplier(s));
+
+    const ingredientIds = new Map<string, number>();
+    demo.ingredients.forEach((ing, i) => {
+      const supplierId = i < 4 ? suppliers[0]?.id : suppliers[1]?.id;
+      const created = local.createIngredient({
+        name: ing.name,
+        unit: ing.unit,
+        unitPrice: ing.unitPrice,
+        supplierId: supplierId ?? null,
+      });
+      ingredientIds.set(ing._key, created.id);
+    });
+
+    const recipeIds = new Map<string, number>();
+    for (const recipe of demo.recipes) {
+      const created = local.createRecipe({
+        name: recipe.name,
+        yieldPortions: recipe.yieldPortions,
+        category: recipe.category,
+        suitableServices: recipe.suitableServices,
+        instructions: recipe.instructions,
+        estimatedCost: recipe.estimatedCost,
+        ingredients: recipe._ings.map((key) => ({
+          ingredientId: ingredientIds.get(key)!,
+          quantity: demo.qtyByKey[key] ?? 1,
+        })),
+      });
+      recipeIds.set(recipe._key, created.id);
+    }
+
+    local.createEvent({
+      clientId: clients[demo.event._clientIndex]!.id,
+      title: demo.event.title,
+      eventDate: demo.event.eventDate,
+      location: demo.event.location,
+      attendees: demo.event.attendees,
+      status: demo.event.status,
+      dietaryRestrictions: demo.event.dietaryRestrictions,
+      notes: demo.event.notes,
+      estimatedCost: demo.event.estimatedCost,
+      services: demo.event.services,
+      recipes: demo.event._recipeKeys.map((r) => ({
+        recipeId: recipeIds.get(r.key)!,
+        serviceType: r.serviceType,
+        portions: r.portions,
+      })),
+    });
+
+    markDemoSeeded(true);
+    return { ok: true };
+  },
 
   dashboard(): Dashboard {
     const store = read();
@@ -381,14 +458,16 @@ export const local = {
         unit: (cat?.unit ?? "unidad") as IngredientUnit,
       };
     });
+    const packed = packRecipeCategory(body.category, body.suitableServices);
     const row: Recipe = {
       id,
       name: body.name,
       yieldPortions: body.yieldPortions,
-      category: body.category ?? null,
+      category: packed,
+      suitableServices: body.suitableServices ?? [],
+      ingredients,
       instructions: body.instructions ?? null,
       estimatedCost: body.estimatedCost ?? null,
-      ingredients,
       createdAt: nowIso(),
       updatedAt: nowIso(),
     };
@@ -414,7 +493,8 @@ export const local = {
       ...store.recipes[idx],
       name: body.name,
       yieldPortions: body.yieldPortions,
-      category: body.category ?? null,
+      category: packRecipeCategory(body.category, body.suitableServices),
+      suitableServices: body.suitableServices ?? [],
       instructions: body.instructions ?? null,
       estimatedCost: body.estimatedCost ?? null,
       ingredients,

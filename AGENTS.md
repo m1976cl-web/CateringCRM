@@ -11,6 +11,7 @@ CRM operativo para catering (clientes, eventos, recetas, compras, proveedores, c
 - Vite + React 19 + TypeScript en `src/`
 - Netlify Functions en `netlify/functions/`
 - Netlify Database + Drizzle en `db/`
+- Supabase opcional (cliente en `src/supabase.ts`, SQL en `supabase/migrations/`)
 - Tipos/lógica compartida en `shared/`
 
 ## Cómo correr
