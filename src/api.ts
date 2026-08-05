@@ -1,3 +1,4 @@
+import { packRecipeCategory, unpackRecipeCategory } from "../shared/recipeMeta";
 import type {
   ClientInput,
   EventInput,
@@ -12,7 +13,10 @@ import type {
   ShoppingListStatus,
   SupplierInput,
 } from "../shared/types";
+import { wasDemoSeeded } from "./demoSeed";
 import { local } from "./localStore";
+import { isSupabaseConfigured } from "./supabase";
+import { cloud } from "./supabaseStore";
 
 export type Client = ClientInput & {
   id: number;
@@ -42,6 +46,7 @@ export type Recipe = {
   name: string;
   yieldPortions: number;
   category: string | null;
+  suitableServices: ServiceType[];
   instructions: string | null;
   estimatedCost: number | null;
   ingredients: Array<{
@@ -54,6 +59,25 @@ export type Recipe = {
   createdAt: string;
   updatedAt: string;
 };
+
+function normalizeRecipe(raw: Omit<Recipe, "suitableServices"> & { suitableServices?: ServiceType[] }): Recipe {
+  const unpacked = unpackRecipeCategory(raw.category);
+  return {
+    ...raw,
+    category: unpacked.category,
+    suitableServices: raw.suitableServices?.length
+      ? raw.suitableServices
+      : unpacked.suitableServices,
+  };
+}
+
+function packRecipeBody(body: RecipeInput): RecipeInput {
+  return {
+    ...body,
+    category: packRecipeCategory(body.category, body.suitableServices),
+    suitableServices: undefined,
+  };
+}
 
 export type EventSummary = {
   id: number;
@@ -147,7 +171,28 @@ export type Dashboard = {
   };
 };
 
+export type DataMode = "supabase" | "netlify" | "static";
+
 const STATIC_ONLY = import.meta.env.VITE_STATIC_ONLY === "true";
+const USE_SUPABASE = isSupabaseConfigured();
+
+/** Backend activo: Supabase (nube) > Netlify API > localStorage. */
+export function getDataMode(): DataMode {
+  if (USE_SUPABASE) return "supabase";
+  if (STATIC_ONLY) return "static";
+  return "netlify";
+}
+
+export function getDataModeLabel(mode: DataMode = getDataMode()): string {
+  switch (mode) {
+    case "supabase":
+      return "Nube (Supabase)";
+    case "netlify":
+      return "API (Netlify)";
+    case "static":
+      return "Estático (este dispositivo)";
+  }
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
@@ -166,16 +211,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return data as T;
 }
 
-function withFallback<Args extends unknown[], T>(
-  remote: (...args: Args) => Promise<T>,
-  localFn: (...args: Args) => T,
+function route<Args extends unknown[], T>(
+  cloudFn: (...args: Args) => Promise<T>,
+  remoteFn: (...args: Args) => Promise<T>,
+  localFn: (...args: Args) => T | Promise<T>,
 ): (...args: Args) => Promise<T> {
   return async (...args: Args) => {
-    if (STATIC_ONLY) return localFn(...args);
+    if (USE_SUPABASE) return cloudFn(...args);
+    if (STATIC_ONLY) return await localFn(...args);
     try {
-      return await remote(...args);
+      return await remoteFn(...args);
     } catch {
-      return localFn(...args);
+      return await localFn(...args);
     }
   };
 }
@@ -254,60 +301,182 @@ const remote = {
 };
 
 export const api = {
-  health: withFallback(remote.health, local.health),
-  dashboard: withFallback(remote.dashboard, () => local.dashboard()),
+  health: route(cloud.health, remote.health, local.health),
+  dashboard: route(cloud.dashboard, remote.dashboard, () => local.dashboard()),
 
-  listClients: withFallback(remote.listClients, local.listClients),
-  getClient: withFallback(remote.getClient, (id) => local.getClient(id)),
-  createClient: withFallback(remote.createClient, (body) => local.createClient(body)),
-  updateClient: withFallback(remote.updateClient, (id, body) => local.updateClient(id, body)),
-  deleteClient: withFallback(remote.deleteClient, (id) => local.deleteClient(id)),
+  listClients: route(cloud.listClients, remote.listClients, local.listClients),
+  getClient: route(cloud.getClient, remote.getClient, (id) => local.getClient(id)),
+  createClient: route(cloud.createClient, remote.createClient, (body) => local.createClient(body)),
+  updateClient: route(cloud.updateClient, remote.updateClient, (id, body) =>
+    local.updateClient(id, body),
+  ),
+  deleteClient: route(cloud.deleteClient, remote.deleteClient, (id) => local.deleteClient(id)),
 
-  listSuppliers: withFallback(remote.listSuppliers, local.listSuppliers),
-  createSupplier: withFallback(remote.createSupplier, (body) => local.createSupplier(body)),
-  updateSupplier: withFallback(remote.updateSupplier, (id, body) =>
+  listSuppliers: route(cloud.listSuppliers, remote.listSuppliers, local.listSuppliers),
+  createSupplier: route(cloud.createSupplier, remote.createSupplier, (body) =>
+    local.createSupplier(body),
+  ),
+  updateSupplier: route(cloud.updateSupplier, remote.updateSupplier, (id, body) =>
     local.updateSupplier(id, body),
   ),
-  deleteSupplier: withFallback(remote.deleteSupplier, (id) => local.deleteSupplier(id)),
+  deleteSupplier: route(cloud.deleteSupplier, remote.deleteSupplier, (id) =>
+    local.deleteSupplier(id),
+  ),
 
-  listIngredients: withFallback(remote.listIngredients, () => local.listIngredients()),
-  createIngredient: withFallback(remote.createIngredient, (body) =>
+  listIngredients: route(cloud.listIngredients, remote.listIngredients, () =>
+    local.listIngredients(),
+  ),
+  createIngredient: route(cloud.createIngredient, remote.createIngredient, (body) =>
     local.createIngredient(body),
   ),
-  updateIngredient: withFallback(remote.updateIngredient, (id, body) =>
+  updateIngredient: route(cloud.updateIngredient, remote.updateIngredient, (id, body) =>
     local.updateIngredient(id, body),
   ),
-  deleteIngredient: withFallback(remote.deleteIngredient, (id) => local.deleteIngredient(id)),
+  deleteIngredient: route(cloud.deleteIngredient, remote.deleteIngredient, (id) =>
+    local.deleteIngredient(id),
+  ),
 
-  listRecipes: withFallback(remote.listRecipes, local.listRecipes),
-  getRecipe: withFallback(remote.getRecipe, (id) => local.getRecipe(id)),
-  createRecipe: withFallback(remote.createRecipe, (body) => local.createRecipe(body)),
-  updateRecipe: withFallback(remote.updateRecipe, (id, body) => local.updateRecipe(id, body)),
-  deleteRecipe: withFallback(remote.deleteRecipe, (id) => local.deleteRecipe(id)),
-
-  listEvents: withFallback(remote.listEvents, () => local.listEvents()),
-  getEvent: withFallback(remote.getEvent, (id) => local.getEvent(id)),
-  createEvent: withFallback(remote.createEvent, (body) => local.createEvent(body)),
-  updateEvent: withFallback(remote.updateEvent, (id, body) => local.updateEvent(id, body)),
-  deleteEvent: withFallback(remote.deleteEvent, (id) => local.deleteEvent(id)),
-
-  getShoppingList: async (eventId: number, regenerate?: boolean) => {
-    if (STATIC_ONLY) return local.getShoppingList(eventId, regenerate ?? false);
-    try {
-      return await remote.getShoppingList(eventId, regenerate);
-    } catch {
-      return local.getShoppingList(eventId, regenerate ?? false);
-    }
+  listRecipes: async () => {
+    const rows = await route(cloud.listRecipes, remote.listRecipes, local.listRecipes)();
+    return rows.map((r) => normalizeRecipe(r));
   },
-  updateShoppingList: withFallback(remote.updateShoppingList, (eventId, body) =>
+  getRecipe: async (id: number) =>
+    normalizeRecipe(await route(cloud.getRecipe, remote.getRecipe, (x) => local.getRecipe(x))(id)),
+  createRecipe: async (body: RecipeInput) =>
+    normalizeRecipe(
+      await route(cloud.createRecipe, remote.createRecipe, (b) => local.createRecipe(b))(
+        packRecipeBody(body),
+      ),
+    ),
+  updateRecipe: async (id: number, body: RecipeInput) =>
+    normalizeRecipe(
+      await route(cloud.updateRecipe, remote.updateRecipe, (x, b) => local.updateRecipe(x, b))(
+        id,
+        packRecipeBody(body),
+      ),
+    ),
+  deleteRecipe: route(cloud.deleteRecipe, remote.deleteRecipe, (id) => local.deleteRecipe(id)),
+
+  listEvents: route(cloud.listEvents, remote.listEvents, () => local.listEvents()),
+  getEvent: route(cloud.getEvent, remote.getEvent, (id) => local.getEvent(id)),
+  createEvent: route(cloud.createEvent, remote.createEvent, (body) => local.createEvent(body)),
+  updateEvent: route(cloud.updateEvent, remote.updateEvent, (id, body) =>
+    local.updateEvent(id, body),
+  ),
+  deleteEvent: route(cloud.deleteEvent, remote.deleteEvent, (id) => local.deleteEvent(id)),
+
+  getShoppingList: route(
+    (eventId: number, regenerate?: boolean) =>
+      cloud.getShoppingList(eventId, regenerate ?? false),
+    remote.getShoppingList,
+    (eventId: number, regenerate?: boolean) =>
+      local.getShoppingList(eventId, regenerate ?? false),
+  ),
+  updateShoppingList: route(cloud.updateShoppingList, remote.updateShoppingList, (eventId, body) =>
     local.updateShoppingList(eventId, body),
   ),
 
-  listQuotes: withFallback(remote.listQuotes, () => local.listQuotes()),
-  getQuote: withFallback(remote.getQuote, (id) => local.getQuote(id)),
-  createQuote: withFallback(remote.createQuote, (body) => local.createQuote(body)),
-  updateQuote: withFallback(remote.updateQuote, (id, body) => local.updateQuote(id, body)),
-  deleteQuote: withFallback(remote.deleteQuote, (id) => local.deleteQuote(id)),
+  listQuotes: route(cloud.listQuotes, remote.listQuotes, () => local.listQuotes()),
+  getQuote: route(cloud.getQuote, remote.getQuote, (id) => local.getQuote(id)),
+  createQuote: route(cloud.createQuote, remote.createQuote, (body) => local.createQuote(body)),
+  updateQuote: route(cloud.updateQuote, remote.updateQuote, (id, body) =>
+    local.updateQuote(id, body),
+  ),
+  deleteQuote: route(cloud.deleteQuote, remote.deleteQuote, (id) => local.deleteQuote(id)),
+
+  isEmpty: async (): Promise<boolean> => {
+    if (USE_SUPABASE) return cloud.isEmpty();
+    if (STATIC_ONLY) return local.isEmpty();
+    try {
+      const d = await remote.dashboard();
+      return (
+        d.counts.clients === 0 &&
+        d.counts.events === 0 &&
+        d.counts.recipes === 0
+      );
+    } catch {
+      return local.isEmpty();
+    }
+  },
+
+  seedDemo: async (): Promise<{ ok: boolean }> => {
+    if (USE_SUPABASE) return cloud.seedDemo();
+    if (STATIC_ONLY) return local.seedDemo();
+    try {
+      await remote.health();
+      const { buildDemoPayload, markDemoSeeded } = await import("./demoSeed");
+      const demo = buildDemoPayload();
+      const dash = await remote.dashboard();
+      if (dash.counts.clients > 0 || dash.counts.events > 0 || dash.counts.recipes > 0) {
+        throw new Error("Ya hay datos. Borra primero si quieres cargar el ejemplo.");
+      }
+
+      const clients = [];
+      for (const c of demo.clients) clients.push(await remote.createClient(c));
+      const suppliers = [];
+      for (const s of demo.suppliers) suppliers.push(await remote.createSupplier(s));
+
+      const ingredientIds = new Map<string, number>();
+      for (let i = 0; i < demo.ingredients.length; i++) {
+        const ing = demo.ingredients[i];
+        const created = await remote.createIngredient({
+          name: ing.name,
+          unit: ing.unit,
+          unitPrice: ing.unitPrice,
+          supplierId: (i < 4 ? suppliers[0]?.id : suppliers[1]?.id) ?? null,
+        });
+        ingredientIds.set(ing._key, created.id);
+      }
+
+      const recipeIds = new Map<string, number>();
+      for (const recipe of demo.recipes) {
+        const created = await remote.createRecipe({
+          name: recipe.name,
+          yieldPortions: recipe.yieldPortions,
+          category: packRecipeCategory(recipe.category, recipe.suitableServices),
+          instructions: recipe.instructions,
+          estimatedCost: recipe.estimatedCost,
+          ingredients: recipe._ings.map((key) => ({
+            ingredientId: ingredientIds.get(key)!,
+            quantity: demo.qtyByKey[key] ?? 1,
+          })),
+        });
+        recipeIds.set(recipe._key, created.id);
+      }
+
+      await remote.createEvent({
+        clientId: clients[demo.event._clientIndex]!.id,
+        title: demo.event.title,
+        eventDate: demo.event.eventDate,
+        location: demo.event.location,
+        attendees: demo.event.attendees,
+        status: demo.event.status,
+        dietaryRestrictions: demo.event.dietaryRestrictions,
+        notes: demo.event.notes,
+        estimatedCost: demo.event.estimatedCost,
+        services: demo.event.services,
+        recipes: demo.event._recipeKeys.map((r) => ({
+          recipeId: recipeIds.get(r.key)!,
+          serviceType: r.serviceType,
+          portions: r.portions,
+        })),
+      });
+      markDemoSeeded(true);
+      return { ok: true };
+    } catch (e) {
+      if (e instanceof Error && e.message.includes("Ya hay datos")) throw e;
+      return local.seedDemo();
+    }
+  },
+
+  clearAll: async (): Promise<{ ok: boolean }> => {
+    if (USE_SUPABASE) return cloud.clearAll();
+    if (STATIC_ONLY) return local.clearAll();
+    // Netlify: no hay endpoint de wipe; limpiamos local y marcamos flag
+    return local.clearAll();
+  },
+
+  wasDemoSeeded: () => wasDemoSeeded(),
 };
 
 export function formatDate(value: string | Date): string {

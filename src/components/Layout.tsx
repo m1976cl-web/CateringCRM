@@ -1,5 +1,6 @@
 import { NavLink, useLocation } from "react-router-dom";
 import { useEffect, useState, type ReactNode } from "react";
+import { getDataMode, getDataModeLabel } from "../api";
 import { InstallButton } from "./InstallButton";
 
 const links = [
@@ -14,9 +15,16 @@ const links = [
   { to: "/proveedores", label: "Proveedores" },
 ];
 
+const modeTone: Record<string, string> = {
+  supabase: "tone-good",
+  netlify: "tone-info",
+  static: "tone-neutral",
+};
+
 export function Layout({ children }: { children: ReactNode }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const location = useLocation();
+  const mode = getDataMode();
 
   useEffect(() => {
     setMenuOpen(false);
@@ -44,6 +52,12 @@ export function Layout({ children }: { children: ReactNode }) {
             </span>
           </NavLink>
           <div className="topbar-actions">
+            <span
+              className={`badge mode-badge ${modeTone[mode] ?? "tone-neutral"}`}
+              title="Dónde se guardan los datos"
+            >
+              {getDataModeLabel(mode)}
+            </span>
             <InstallButton />
             <button
               type="button"

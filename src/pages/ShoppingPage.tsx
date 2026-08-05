@@ -2,15 +2,18 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, formatDate, formatMoney, type EventSummary, type ShoppingList } from "../api";
 import { EmptyState, PageHeader } from "../components/EmptyState";
+import { SERVICE_TYPE_LABELS } from "../../shared/types";
 
 export function ShoppingPage() {
   const { eventId: eventIdParam } = useParams();
   const [events, setEvents] = useState<EventSummary[]>([]);
   const [selectedId, setSelectedId] = useState(eventIdParam ?? "");
   const [list, setList] = useState<ShoppingList | null>(null);
+  const [menuCount, setMenuCount] = useState(0);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [emptyMenu, setEmptyMenu] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -38,12 +41,24 @@ export function ShoppingPage() {
   useEffect(() => {
     if (!selectedId) {
       setList(null);
+      setEmptyMenu(false);
+      setMenuCount(0);
       return;
     }
     let alive = true;
     (async () => {
       setBusy(true);
       try {
+        const detail = await api.getEvent(Number(selectedId));
+        if (!alive) return;
+        setMenuCount(detail.recipes.length);
+        if (detail.recipes.length === 0) {
+          setEmptyMenu(true);
+          setList(null);
+          setError("");
+          return;
+        }
+        setEmptyMenu(false);
         const data = await api.getShoppingList(Number(selectedId));
         if (alive) {
           setList(data);
@@ -68,13 +83,29 @@ export function ShoppingPage() {
       arr.push(item);
       map.set(key, arr);
     }
-    return [...map.entries()];
+    return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0], "es"));
   }, [list]);
+
+  const selectedEvent = events.find((e) => String(e.id) === selectedId);
+
+  const serviceSummary = useMemo(() => {
+    if (!selectedEvent) return "";
+    return selectedEvent.services.map((s) => SERVICE_TYPE_LABELS[s]).join(", ");
+  }, [selectedEvent]);
 
   async function regenerate() {
     if (!selectedId) return;
     setBusy(true);
     try {
+      const detail = await api.getEvent(Number(selectedId));
+      setMenuCount(detail.recipes.length);
+      if (detail.recipes.length === 0) {
+        setEmptyMenu(true);
+        setList(null);
+        setError("");
+        return;
+      }
+      setEmptyMenu(false);
       setList(await api.getShoppingList(Number(selectedId), true));
       setError("");
     } catch (e) {
@@ -114,19 +145,27 @@ export function ShoppingPage() {
     }
   }
 
-  const selectedEvent = events.find((e) => String(e.id) === selectedId);
-
   return (
     <div>
       <PageHeader
         title="Lista de compras"
-        subtitle="Se calcula desde las recetas del evento, escaladas por porciones."
+        subtitle="Se calcula desde el menú del evento: cantidad de la receta × (porciones del evento ÷ rendimiento)."
         actions={
           <div className="page-actions">
-            <button type="button" className="btn" disabled={!selectedId || busy} onClick={() => void regenerate()}>
-              Regenerar lista
+            <button
+              type="button"
+              className="btn"
+              disabled={!selectedId || busy || emptyMenu}
+              onClick={() => void regenerate()}
+            >
+              Regenerar desde el menú
             </button>
-            <button type="button" className="btn primary" disabled={!list || busy} onClick={() => void markAllDone()}>
+            <button
+              type="button"
+              className="btn primary"
+              disabled={!list || busy}
+              onClick={() => void markAllDone()}
+            >
               Marcar todo comprado
             </button>
           </div>
@@ -134,16 +173,21 @@ export function ShoppingPage() {
       />
 
       <div className="panel" style={{ marginBottom: 16 }}>
-        <FormSelect
-          events={events}
-          selectedId={selectedId}
-          onChange={setSelectedId}
-        />
+        <FormSelect events={events} selectedId={selectedId} onChange={setSelectedId} />
         {selectedEvent ? (
-          <p className="meta" style={{ marginTop: 8 }}>
-            {selectedEvent.title} · {formatDate(selectedEvent.eventDate)} ·{" "}
-            <Link to={`/eventos/${selectedEvent.id}`}>Ver evento</Link>
-          </p>
+          <div style={{ marginTop: 10 }}>
+            <p className="meta" style={{ margin: 0 }}>
+              <Link to={`/eventos/${selectedEvent.id}`}>{selectedEvent.title}</Link>
+              {" · "}
+              {formatDate(selectedEvent.eventDate)} · {selectedEvent.attendees} personas
+              {serviceSummary ? ` · ${serviceSummary}` : ""}
+              {menuCount ? ` · ${menuCount} receta(s) en menú` : ""}
+            </p>
+            <p className="meta" style={{ marginTop: 6 }}>
+              Las cantidades ya están escaladas al número de porciones de cada receta en el evento.
+              Si cambias el menú, pulsa <strong>Regenerar desde el menú</strong>.
+            </p>
+          </div>
         ) : null}
       </div>
 
@@ -153,22 +197,35 @@ export function ShoppingPage() {
       {!loading && !selectedId ? (
         <EmptyState
           title="Elige un evento"
-          description="O crea un evento con recetas en el menú."
+          description="O crea un evento, planifica el menú por servicio y genera la lista."
           actionTo="/eventos/nuevo"
           actionLabel="Nuevo evento"
         />
       ) : null}
 
-      {list && !busy ? (
+      {!loading && !busy && emptyMenu && selectedId ? (
+        <EmptyState
+          title="Este evento aún no tiene menú"
+          description="Agrega recetas por servicio (desayuno, almuerzo…) y vuelve a generar la lista de compras."
+          actionTo={`/eventos/${selectedId}`}
+          actionLabel="Planificar menú"
+        />
+      ) : null}
+
+      {list && !busy && !emptyMenu ? (
         list.items.length === 0 ? (
           <EmptyState
             title="Lista vacía"
-            description="Agrega recetas al menú del evento y regenera la lista."
-            actionTo={selectedId ? `/eventos/${selectedId}` : "/eventos"}
-            actionLabel="Ir al evento"
+            description="Las recetas del menú no tienen ingredientes. Complétalas en Recetas y regenera."
+            actionTo="/recetas"
+            actionLabel="Ir a recetas"
           />
         ) : (
           <div className="stack">
+            <p className="meta">
+              Agrupado por proveedor · {list.items.length} ítem(s) · generada{" "}
+              {formatDate(list.generatedAt)}
+            </p>
             {grouped.map(([supplier, items]) => (
               <section key={supplier} className="panel">
                 <h2>{supplier}</h2>
@@ -198,6 +255,11 @@ export function ShoppingPage() {
                 ))}
               </section>
             ))}
+            <p className="meta">
+              <Link to={`/eventos/${selectedId}`}>← Volver al evento</Link>
+              {" · "}
+              <Link to="/recetas">Editar recetas</Link>
+            </p>
           </div>
         )
       ) : null}

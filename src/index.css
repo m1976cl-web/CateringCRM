@@ -100,6 +100,46 @@ textarea {
   gap: 8px;
 }
 
+.mode-badge {
+  max-width: 11rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+}
+
+@media (max-width: 520px) {
+  .mode-badge {
+    max-width: 7.5rem;
+    font-size: 0.7rem;
+    padding: 3px 8px;
+  }
+}
+
+.demo-panel {
+  margin-bottom: 18px;
+}
+
+.demo-panel-soft {
+  padding: 12px 16px;
+}
+
+button.linkish {
+  appearance: none;
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+  font: inherit;
+}
+
+button.linkish:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .brand {
   display: inline-flex;
   align-items: center;
@@ -438,6 +478,16 @@ textarea {
   background: var(--accent-2);
 }
 
+.btn.accent {
+  background: var(--warn);
+  color: #fff;
+  border-color: var(--warn);
+}
+
+.btn.accent:hover {
+  filter: brightness(1.05);
+}
+
 .btn.ghost {
   background: transparent;
 }
@@ -725,6 +775,96 @@ table.data th {
 
 .inline-row > * {
   flex: 1;
+}
+
+.qty-with-unit {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.qty-with-unit input {
+  flex: 1;
+}
+
+.unit-tag {
+  flex: 0 0 auto;
+  min-width: 2.5rem;
+  color: var(--muted);
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.menu-planner {
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.service-block {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  padding: 14px 16px;
+}
+
+.service-block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.service-block-head h3 {
+  margin: 0;
+  font-family: var(--display);
+  font-size: 1.15rem;
+}
+
+.menu-row {
+  display: grid;
+  grid-template-columns: 1.4fr 0.7fr;
+  gap: 10px 12px;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+
+.menu-row-meta {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+@media (max-width: 640px) {
+  .menu-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.menu-summary {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--accent-soft);
+  border: 1px solid rgba(31, 107, 74, 0.25);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.empty-inline {
+  margin-bottom: 12px;
 }
 
 .quick-actions {
