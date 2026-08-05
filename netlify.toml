@@ -1,0 +1,10 @@
+[build]
+command = "npm run build"
+publish = "dist"
+
+# SPA fallback so client-side routes resolve to the app shell.
+# API routes are declared via each function's `config.path` and take precedence.
+[[redirects]]
+from = "/*"
+to = "/index.html"
+status = 200
