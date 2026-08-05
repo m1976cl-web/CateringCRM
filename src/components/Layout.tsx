@@ -1,0 +1,84 @@
+import { NavLink, useLocation } from "react-router-dom";
+import { useEffect, useState, type ReactNode } from "react";
+import { InstallButton } from "./InstallButton";
+
+const links = [
+  { to: "/", label: "Inicio", end: true },
+  { to: "/eventos", label: "Eventos" },
+  { to: "/calendario", label: "Calendario" },
+  { to: "/clientes", label: "Clientes" },
+  { to: "/recetas", label: "Recetas" },
+  { to: "/compras", label: "Compras" },
+  { to: "/cotizaciones", label: "Cotizaciones" },
+  { to: "/ingredientes", label: "Ingredientes" },
+  { to: "/proveedores", label: "Proveedores" },
+];
+
+export function Layout({ children }: { children: ReactNode }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const location = useLocation();
+
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [menuOpen]);
+
+  return (
+    <div className="app-shell">
+      <header className="topbar">
+        <div className="topbar-row">
+          <NavLink to="/" className="brand">
+            <span className="brand-mark" aria-hidden>
+              ◈
+            </span>
+            <span>
+              Catering<em>CRM</em>
+            </span>
+          </NavLink>
+          <div className="topbar-actions">
+            <InstallButton />
+            <button
+              type="button"
+              className="nav-toggle"
+              aria-expanded={menuOpen}
+              aria-controls="main-nav"
+              onClick={() => setMenuOpen((v) => !v)}
+            >
+              <span className="sr-only">{menuOpen ? "Cerrar menú" : "Abrir menú"}</span>
+              <span aria-hidden className={menuOpen ? "nav-toggle-bars open" : "nav-toggle-bars"}>
+                <i />
+                <i />
+                <i />
+              </span>
+            </button>
+          </div>
+        </div>
+        <nav
+          id="main-nav"
+          className={menuOpen ? "nav nav-open" : "nav"}
+          aria-label="Principal"
+        >
+          {links.map((link) => (
+            <NavLink
+              key={link.to}
+              to={link.to}
+              end={link.end}
+              className={({ isActive }) => (isActive ? "active" : undefined)}
+            >
+              {link.label}
+            </NavLink>
+          ))}
+        </nav>
+      </header>
+      <main className="main">{children}</main>
+    </div>
+  );
+}

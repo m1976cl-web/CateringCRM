@@ -1,0 +1,157 @@
+import {
+  boolean,
+  doublePrecision,
+  integer,
+  jsonb,
+  pgTable,
+  serial,
+  text,
+  timestamp,
+  varchar,
+} from "drizzle-orm/pg-core";
+import type {
+  EventStatus,
+  IngredientUnit,
+  QuoteItem,
+  QuoteStatus,
+  ServiceType,
+  ShoppingListStatus,
+} from "../shared/types";
+
+export const clients = pgTable("clients", {
+  id: serial().primaryKey(),
+  name: varchar("name", { length: 200 }).notNull(),
+  phone: varchar("phone", { length: 40 }),
+  email: varchar("email", { length: 160 }),
+  company: varchar("company", { length: 200 }),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const suppliers = pgTable("suppliers", {
+  id: serial().primaryKey(),
+  name: varchar("name", { length: 200 }).notNull(),
+  contactName: varchar("contact_name", { length: 160 }),
+  phone: varchar("phone", { length: 40 }),
+  email: varchar("email", { length: 160 }),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const ingredients = pgTable("ingredients", {
+  id: serial().primaryKey(),
+  name: varchar("name", { length: 200 }).notNull(),
+  unit: varchar("unit", { length: 20 }).$type<IngredientUnit>().notNull(),
+  supplierId: integer("supplier_id").references(() => suppliers.id, { onDelete: "set null" }),
+  unitPrice: doublePrecision("unit_price"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const recipes = pgTable("recipes", {
+  id: serial().primaryKey(),
+  name: varchar("name", { length: 200 }).notNull(),
+  yieldPortions: integer("yield_portions").notNull().default(1),
+  category: varchar("category", { length: 80 }),
+  instructions: text("instructions"),
+  estimatedCost: doublePrecision("estimated_cost"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const recipeIngredients = pgTable("recipe_ingredients", {
+  id: serial().primaryKey(),
+  recipeId: integer("recipe_id")
+    .notNull()
+    .references(() => recipes.id, { onDelete: "cascade" }),
+  ingredientId: integer("ingredient_id")
+    .notNull()
+    .references(() => ingredients.id, { onDelete: "restrict" }),
+  quantity: doublePrecision("quantity").notNull(),
+});
+
+export const events = pgTable("events", {
+  id: serial().primaryKey(),
+  clientId: integer("client_id")
+    .notNull()
+    .references(() => clients.id, { onDelete: "restrict" }),
+  title: varchar("title", { length: 200 }).notNull(),
+  eventDate: timestamp("event_date").notNull(),
+  location: varchar("location", { length: 300 }),
+  attendees: integer("attendees").notNull().default(1),
+  status: varchar("status", { length: 40 }).$type<EventStatus>().notNull().default("borrador"),
+  dietaryRestrictions: text("dietary_restrictions"),
+  notes: text("notes"),
+  estimatedCost: doublePrecision("estimated_cost"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const eventServices = pgTable("event_services", {
+  id: serial().primaryKey(),
+  eventId: integer("event_id")
+    .notNull()
+    .references(() => events.id, { onDelete: "cascade" }),
+  serviceType: varchar("service_type", { length: 40 }).$type<ServiceType>().notNull(),
+});
+
+export const eventRecipes = pgTable("event_recipes", {
+  id: serial().primaryKey(),
+  eventId: integer("event_id")
+    .notNull()
+    .references(() => events.id, { onDelete: "cascade" }),
+  recipeId: integer("recipe_id")
+    .notNull()
+    .references(() => recipes.id, { onDelete: "restrict" }),
+  serviceType: varchar("service_type", { length: 40 }).$type<ServiceType>().notNull(),
+  portions: integer("portions").notNull(),
+});
+
+export const quotes = pgTable("quotes", {
+  id: serial().primaryKey(),
+  eventId: integer("event_id")
+    .notNull()
+    .references(() => events.id, { onDelete: "cascade" }),
+  quoteNumber: varchar("quote_number", { length: 40 }),
+  quoteDate: timestamp("quote_date").notNull().defaultNow(),
+  items: jsonb("items").$type<QuoteItem[]>().notNull().default([]),
+  total: doublePrecision("total").notNull().default(0),
+  notes: text("notes"),
+  status: varchar("status", { length: 40 }).$type<QuoteStatus>().notNull().default("borrador"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const shoppingLists = pgTable("shopping_lists", {
+  id: serial().primaryKey(),
+  eventId: integer("event_id")
+    .notNull()
+    .references(() => events.id, { onDelete: "cascade" }),
+  status: varchar("status", { length: 40 })
+    .$type<ShoppingListStatus>()
+    .notNull()
+    .default("pendiente"),
+  generatedAt: timestamp("generated_at").notNull().defaultNow(),
+});
+
+export const shoppingListItems = pgTable("shopping_list_items", {
+  id: serial().primaryKey(),
+  shoppingListId: integer("shopping_list_id")
+    .notNull()
+    .references(() => shoppingLists.id, { onDelete: "cascade" }),
+  ingredientId: integer("ingredient_id")
+    .notNull()
+    .references(() => ingredients.id, { onDelete: "restrict" }),
+  quantity: doublePrecision("quantity").notNull(),
+  unit: varchar("unit", { length: 20 }).$type<IngredientUnit>().notNull(),
+  purchased: boolean("purchased").notNull().default(false),
+});
+
+export type ClientRow = typeof clients.$inferSelect;
+export type EventRow = typeof events.$inferSelect;
+export type RecipeRow = typeof recipes.$inferSelect;
+export type IngredientRow = typeof ingredients.$inferSelect;
+export type SupplierRow = typeof suppliers.$inferSelect;
+export type QuoteRow = typeof quotes.$inferSelect;
