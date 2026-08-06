@@ -77,6 +77,7 @@ export type IngredientInput = {
   unit: IngredientUnit;
   supplierId?: number | null;
   unitPrice?: number | null;
+  stockQty?: number | null;
 };
 
 export type RecipeIngredientInput = {
@@ -88,7 +89,7 @@ export type RecipeInput = {
   name: string;
   yieldPortions: number;
   category?: string | null;
-  /** Servicios del día para los que encaja (desayuno, almuerzo…). Se guarda en category. */
+  /** Servicios del día para los que encaja (desayuno, almuerzo…). */
   suitableServices?: ServiceType[];
   instructions?: string | null;
   estimatedCost?: number | null;

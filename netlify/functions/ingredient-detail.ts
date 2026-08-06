@@ -36,6 +36,7 @@ export default async (req: Request, context: Context) => {
           body.unitPrice === null || body.unitPrice === undefined || body.unitPrice === ""
             ? null
             : asNumber(body.unitPrice),
+        stockQty: asNumber(body.stockQty, 0),
         updatedAt: now(),
       })
       .where(eq(ingredients.id, id))

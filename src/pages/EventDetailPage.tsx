@@ -2,14 +2,17 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   api,
+  formatMoney,
   toDatetimeLocal,
   type Client,
+  type Ingredient,
   type Recipe,
 } from "../api";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { FormField } from "../components/FormField";
 import { PageHeader } from "../components/EmptyState";
 import { recipeFitsService } from "../../shared/recipeMeta";
+import { estimateFoodCost } from "../../shared/shopping";
 import {
   EVENT_STATUSES,
   EVENT_STATUS_LABELS,
@@ -42,6 +45,7 @@ export function EventDetailPage() {
 
   const [clients, setClients] = useState<Client[]>([]);
   const [recipes, setRecipes] = useState<Recipe[]>([]);
+  const [ingredients, setIngredients] = useState<Ingredient[]>([]);
   const [title, setTitle] = useState("");
   const [clientId, setClientId] = useState("");
   const [eventDate, setEventDate] = useState("");
@@ -62,10 +66,15 @@ export function EventDetailPage() {
     let alive = true;
     (async () => {
       try {
-        const [c, r] = await Promise.all([api.listClients(), api.listRecipes()]);
+        const [c, r, ings] = await Promise.all([
+          api.listClients(),
+          api.listRecipes(),
+          api.listIngredients(),
+        ]);
         if (!alive) return;
         setClients(c);
         setRecipes(r);
+        setIngredients(ings);
         if (!isNew && eventId) {
           const ev = await api.getEvent(eventId);
           if (!alive) return;
@@ -150,6 +159,30 @@ export function EventDetailPage() {
   function syncAllPortions() {
     setMenu((prev) => prev.map((row) => ({ ...row, portions: attendees, syncAttendees: true })));
   }
+
+  const foodCost = useMemo(() => {
+    const byId = new Map(ingredients.map((i) => [i.id, i]));
+    const forCost = menu.map((row) => {
+      const recipe = recipes.find((r) => r.id === row.recipeId);
+      return {
+        yieldPortions: recipe?.yieldPortions ?? 1,
+        portions: row.portions,
+        ingredients: (recipe?.ingredients ?? []).map((ing) => {
+          const cat = byId.get(ing.ingredientId);
+          return {
+            ingredientId: ing.ingredientId,
+            name: cat?.name ?? ing.name,
+            unit: cat?.unit ?? ing.unit,
+            quantity: ing.quantity,
+            supplierId: cat?.supplierId ?? null,
+            supplierName: cat?.supplierName ?? null,
+            unitPrice: cat?.unitPrice ?? null,
+          };
+        }),
+      };
+    });
+    return estimateFoodCost(forCost);
+  }, [menu, recipes, ingredients]);
 
   const menuByService = useMemo(() => {
     const map = new Map<ServiceType, MenuRow[]>();
@@ -260,8 +293,11 @@ export function EventDetailPage() {
               <Link className="btn" to={`/compras/${eventId}`}>
                 Ver compras
               </Link>
-              <Link className="btn" to="/cotizaciones">
+              <Link className="btn" to={`/cotizaciones?eventId=${eventId}`}>
                 Cotizar
+              </Link>
+              <Link className="btn" to={`/eventos/${eventId}/produccion`}>
+                Hoja de producción
               </Link>
             </>
           ) : null
@@ -350,14 +386,32 @@ export function EventDetailPage() {
         </FormField>
 
         <div className="grid-2">
-          <FormField label="Costo estimado">
-            <input
-              type="number"
-              min={0}
-              step="0.01"
-              value={estimatedCost}
-              onChange={(e) => setEstimatedCost(e.target.value)}
-            />
+          <FormField
+            label="Costo estimado (venta)"
+            hint={
+              foodCost > 0
+                ? `Costo ingredientes ≈ ${formatMoney(foodCost)}. Puedes usarlo como base.`
+                : "Se calcula solo si los ingredientes tienen precio."
+            }
+          >
+            <div className="inline-row">
+              <input
+                type="number"
+                min={0}
+                step="1"
+                value={estimatedCost}
+                onChange={(e) => setEstimatedCost(e.target.value)}
+              />
+              {foodCost > 0 ? (
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => setEstimatedCost(String(Math.round(foodCost)))}
+                >
+                  Usar costo ingredientes
+                </button>
+              ) : null}
+            </div>
           </FormField>
           <FormField label="Notas">
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} />

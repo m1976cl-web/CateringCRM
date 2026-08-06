@@ -42,6 +42,9 @@ export default async (req: Request, _context: Context) => {
       name,
       yieldPortions,
       category: asOptionalString(body.category),
+      suitableServices: Array.isArray(body.suitableServices)
+        ? body.suitableServices
+        : [],
       instructions: asOptionalString(body.instructions),
       estimatedCost:
         body.estimatedCost === null || body.estimatedCost === undefined || body.estimatedCost === ""

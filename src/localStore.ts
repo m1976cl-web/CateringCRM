@@ -23,7 +23,6 @@ import type {
   ShoppingList,
   Supplier,
 } from "./api";
-import { packRecipeCategory } from "../shared/recipeMeta";
 import { buildDemoPayload, markDemoSeeded } from "./demoSeed";
 
 const KEY = "catering-crm:v1";
@@ -119,7 +118,11 @@ function withSupplierName(
   const supplier = row.supplierId
     ? store.suppliers.find((s) => s.id === row.supplierId)
     : undefined;
-  return { ...row, supplierName: supplier?.name ?? null };
+  return {
+    ...row,
+    stockQty: row.stockQty ?? 0,
+    supplierName: supplier?.name ?? null,
+  };
 }
 
 function eventSummary(store: Store, ev: Store["events"][number]): EventSummary {
@@ -205,6 +208,17 @@ export const local = {
   clearAll(): { ok: boolean } {
     write(empty());
     markDemoSeeded(false);
+    return { ok: true };
+  },
+
+  exportJson(): string {
+    return JSON.stringify(read(), null, 2);
+  },
+
+  importJson(json: string): { ok: boolean } {
+    const data = JSON.parse(json) as Store;
+    if (!data || !Array.isArray(data.clients)) fail("Archivo de respaldo inválido");
+    write({ ...empty(), ...data, seq: data.seq ?? {} });
     return { ok: true };
   },
 
@@ -409,6 +423,7 @@ export const local = {
       unit: body.unit,
       supplierId: body.supplierId ?? null,
       unitPrice: body.unitPrice ?? null,
+      stockQty: body.stockQty ?? 0,
       createdAt: nowIso(),
       updatedAt: nowIso(),
     };
@@ -426,6 +441,7 @@ export const local = {
       unit: body.unit,
       supplierId: body.supplierId ?? null,
       unitPrice: body.unitPrice ?? null,
+      stockQty: body.stockQty ?? store.ingredients[idx].stockQty ?? 0,
       updatedAt: nowIso(),
     };
     write(store);
@@ -458,12 +474,15 @@ export const local = {
         unit: (cat?.unit ?? "unidad") as IngredientUnit,
       };
     });
-    const packed = packRecipeCategory(body.category, body.suitableServices);
+    const packedCategory =
+      body.category?.startsWith("svc:") === true
+        ? null
+        : body.category ?? null;
     const row: Recipe = {
       id,
       name: body.name,
       yieldPortions: body.yieldPortions,
-      category: packed,
+      category: packedCategory,
       suitableServices: body.suitableServices ?? [],
       ingredients,
       instructions: body.instructions ?? null,
@@ -493,7 +512,7 @@ export const local = {
       ...store.recipes[idx],
       name: body.name,
       yieldPortions: body.yieldPortions,
-      category: packRecipeCategory(body.category, body.suitableServices),
+      category: body.category?.startsWith("svc:") ? null : body.category ?? null,
       suitableServices: body.suitableServices ?? [],
       instructions: body.instructions ?? null,
       estimatedCost: body.estimatedCost ?? null,
@@ -622,10 +641,14 @@ export const local = {
       };
     });
 
-    const lines = buildShoppingLines(recipesForShopping).map((l) => ({
-      ...l,
-      quantity: roundQty(l.quantity),
-    }));
+    const lines = buildShoppingLines(recipesForShopping)
+      .map((l) => {
+        const cat = store.ingredients.find((i) => i.id === l.ingredientId);
+        const stock = cat?.stockQty ?? 0;
+        const needed = roundQty(Math.max(0, l.quantity - stock));
+        return { ...l, quantity: needed };
+      })
+      .filter((l) => l.quantity > 0);
 
     const list: ShoppingList = {
       id: existing?.id ?? nextId(store, "shoppingLists"),

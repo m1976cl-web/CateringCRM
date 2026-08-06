@@ -152,6 +152,28 @@ export function ShoppingPage() {
         subtitle="Se calcula desde el menú del evento: cantidad de la receta × (porciones del evento ÷ rendimiento)."
         actions={
           <div className="page-actions">
+            {list && list.items.length > 0 ? (
+              <a
+                className="btn"
+                href={`https://wa.me/?text=${encodeURIComponent(
+                  [
+                    "Lista de compras",
+                    selectedEvent ? selectedEvent.title : "",
+                    "",
+                    ...list.items.map(
+                      (i) =>
+                        `${i.purchased ? "☑" : "☐"} ${i.quantity} ${i.unit} ${i.name}`,
+                    ),
+                  ]
+                    .filter(Boolean)
+                    .join("\n"),
+                )}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                WhatsApp
+              </a>
+            ) : null}
             <button
               type="button"
               className="btn"

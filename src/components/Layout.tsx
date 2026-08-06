@@ -1,18 +1,23 @@
 import { NavLink, useLocation } from "react-router-dom";
 import { useEffect, useState, type ReactNode } from "react";
 import { getDataMode, getDataModeLabel } from "../api";
+import { onOfflineFallback, resetOfflineFallbackFlag } from "../offlineBanner";
 import { InstallButton } from "./InstallButton";
 
-const links = [
+const operationLinks = [
   { to: "/", label: "Inicio", end: true },
   { to: "/eventos", label: "Eventos" },
   { to: "/calendario", label: "Calendario" },
-  { to: "/clientes", label: "Clientes" },
-  { to: "/recetas", label: "Recetas" },
   { to: "/compras", label: "Compras" },
   { to: "/cotizaciones", label: "Cotizaciones" },
+];
+
+const catalogLinks = [
+  { to: "/clientes", label: "Clientes" },
+  { to: "/recetas", label: "Recetas" },
   { to: "/ingredientes", label: "Ingredientes" },
   { to: "/proveedores", label: "Proveedores" },
+  { to: "/ajustes", label: "Ajustes" },
 ];
 
 const modeTone: Record<string, string> = {
@@ -23,6 +28,7 @@ const modeTone: Record<string, string> = {
 
 export function Layout({ children }: { children: ReactNode }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [offlineBanner, setOfflineBanner] = useState(false);
   const location = useLocation();
   const mode = getDataMode();
 
@@ -38,6 +44,10 @@ export function Layout({ children }: { children: ReactNode }) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [menuOpen]);
+
+  useEffect(() => {
+    return onOfflineFallback(() => setOfflineBanner(true));
+  }, []);
 
   return (
     <div className="app-shell">
@@ -80,18 +90,56 @@ export function Layout({ children }: { children: ReactNode }) {
           className={menuOpen ? "nav nav-open" : "nav"}
           aria-label="Principal"
         >
-          {links.map((link) => (
-            <NavLink
-              key={link.to}
-              to={link.to}
-              end={link.end}
-              className={({ isActive }) => (isActive ? "active" : undefined)}
-            >
-              {link.label}
-            </NavLink>
-          ))}
+          <div className="nav-group">
+            <span className="nav-group-label">Operación</span>
+            {operationLinks.map((link) => (
+              <NavLink
+                key={link.to}
+                to={link.to}
+                end={link.end}
+                className={({ isActive }) => (isActive ? "active" : undefined)}
+              >
+                {link.label}
+              </NavLink>
+            ))}
+          </div>
+          <div className="nav-group">
+            <span className="nav-group-label">Catálogo</span>
+            {catalogLinks.map((link) => (
+              <NavLink
+                key={link.to}
+                to={link.to}
+                className={({ isActive }) => (isActive ? "active" : undefined)}
+              >
+                {link.label}
+              </NavLink>
+            ))}
+          </div>
         </nav>
       </header>
+
+      {mode === "static" ? (
+        <div className="banner banner-warn" role="status">
+          Los datos no se comparten entre celulares. Conectá la nube en Ajustes para el equipo.
+        </div>
+      ) : null}
+
+      {offlineBanner ? (
+        <div className="banner banner-danger" role="alert">
+          No se pudo conectar al servidor; guardando solo en este dispositivo.{" "}
+          <button
+            type="button"
+            className="linkish"
+            onClick={() => {
+              resetOfflineFallbackFlag();
+              setOfflineBanner(false);
+            }}
+          >
+            Entendido
+          </button>
+        </div>
+      ) : null}
+
       <main className="main">{children}</main>
     </div>
   );
