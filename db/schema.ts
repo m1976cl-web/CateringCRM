@@ -46,6 +46,7 @@ export const ingredients = pgTable("ingredients", {
   unit: varchar("unit", { length: 20 }).$type<IngredientUnit>().notNull(),
   supplierId: integer("supplier_id").references(() => suppliers.id, { onDelete: "set null" }),
   unitPrice: doublePrecision("unit_price"),
+  stockQty: doublePrecision("stock_qty").notNull().default(0),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -55,6 +56,7 @@ export const recipes = pgTable("recipes", {
   name: varchar("name", { length: 200 }).notNull(),
   yieldPortions: integer("yield_portions").notNull().default(1),
   category: varchar("category", { length: 80 }),
+  suitableServices: jsonb("suitable_services").$type<ServiceType[]>().notNull().default([]),
   instructions: text("instructions"),
   estimatedCost: doublePrecision("estimated_cost"),
   createdAt: timestamp("created_at").notNull().defaultNow(),

@@ -77,7 +77,13 @@ export function RecipesPage() {
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    const ingredients = ings.filter((x) => x.ingredientId && x.quantity > 0);
+    if (ingredients.length === 0) {
+      setError("Agrega al menos un ingrediente a la receta");
+      return;
+    }
     setSaving(true);
+    setError("");
     try {
       const payload = {
         name: form.name.trim(),
@@ -86,7 +92,7 @@ export function RecipesPage() {
         suitableServices: suitable,
         instructions: form.instructions || null,
         estimatedCost: form.estimatedCost === "" ? null : Number(form.estimatedCost),
-        ingredients: ings.filter((x) => x.ingredientId && x.quantity > 0),
+        ingredients,
       };
       if (editingId) await api.updateRecipe(editingId, payload);
       else await api.createRecipe(payload);

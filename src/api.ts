@@ -1,4 +1,4 @@
-import { packRecipeCategory, unpackRecipeCategory } from "../shared/recipeMeta";
+import { unpackRecipeCategory } from "../shared/recipeMeta";
 import type {
   ClientInput,
   EventInput,
@@ -15,6 +15,7 @@ import type {
 } from "../shared/types";
 import { wasDemoSeeded } from "./demoSeed";
 import { local } from "./localStore";
+import { notifyOfflineFallback } from "./offlineBanner";
 import { isSupabaseConfigured } from "./supabase";
 import { cloud } from "./supabaseStore";
 
@@ -36,6 +37,7 @@ export type Ingredient = {
   unit: IngredientUnit;
   supplierId: number | null;
   unitPrice: number | null;
+  stockQty: number;
   supplierName?: string | null;
   createdAt: string;
   updatedAt: string;
@@ -62,20 +64,22 @@ export type Recipe = {
 
 function normalizeRecipe(raw: Omit<Recipe, "suitableServices"> & { suitableServices?: ServiceType[] }): Recipe {
   const unpacked = unpackRecipeCategory(raw.category);
+  const fromCol = raw.suitableServices?.length ? raw.suitableServices : [];
   return {
     ...raw,
-    category: unpacked.category,
-    suitableServices: raw.suitableServices?.length
-      ? raw.suitableServices
-      : unpacked.suitableServices,
+    category: unpacked.category ?? (raw.category?.startsWith("svc:") ? null : raw.category),
+    suitableServices: fromCol.length ? fromCol : unpacked.suitableServices,
   };
 }
 
 function packRecipeBody(body: RecipeInput): RecipeInput {
+  // Persist suitableServices as real field; keep category as free text only.
   return {
     ...body,
-    category: packRecipeCategory(body.category, body.suitableServices),
-    suitableServices: undefined,
+    category: body.category?.startsWith("svc:")
+      ? unpackRecipeCategory(body.category).category
+      : body.category ?? null,
+    suitableServices: body.suitableServices ?? [],
   };
 }
 
@@ -186,12 +190,17 @@ export function getDataMode(): DataMode {
 export function getDataModeLabel(mode: DataMode = getDataMode()): string {
   switch (mode) {
     case "supabase":
-      return "Nube (Supabase)";
+      return "Nube (se comparte)";
     case "netlify":
-      return "API (Netlify)";
+      return "Servidor";
     case "static":
-      return "Estático (este dispositivo)";
+      return "Solo este dispositivo";
   }
+}
+
+/** true si se puede borrar todo (local o Supabase). En API Netlify no hay wipe. */
+export function canClearAllData(): boolean {
+  return USE_SUPABASE || STATIC_ONLY;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -222,6 +231,7 @@ function route<Args extends unknown[], T>(
     try {
       return await remoteFn(...args);
     } catch {
+      notifyOfflineFallback();
       return await localFn(...args);
     }
   };
@@ -433,7 +443,8 @@ export const api = {
         const created = await remote.createRecipe({
           name: recipe.name,
           yieldPortions: recipe.yieldPortions,
-          category: packRecipeCategory(recipe.category, recipe.suitableServices),
+          category: recipe.category,
+          suitableServices: recipe.suitableServices,
           instructions: recipe.instructions,
           estimatedCost: recipe.estimatedCost,
           ingredients: recipe._ings.map((key) => ({
@@ -472,17 +483,21 @@ export const api = {
   clearAll: async (): Promise<{ ok: boolean }> => {
     if (USE_SUPABASE) return cloud.clearAll();
     if (STATIC_ONLY) return local.clearAll();
-    // Netlify: no hay endpoint de wipe; limpiamos local y marcamos flag
-    return local.clearAll();
+    throw new Error(
+      "En modo servidor no se pueden borrar todos los datos desde aquí. Usa la base de datos o cambia a modo local/nube.",
+    );
   },
 
   wasDemoSeeded: () => wasDemoSeeded(),
+
+  exportLocalBackup: (): string => local.exportJson(),
+  importLocalBackup: (json: string): { ok: boolean } => local.importJson(json),
 };
 
 export function formatDate(value: string | Date): string {
   const d = typeof value === "string" ? new Date(value) : value;
   if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleString("es", {
+  return d.toLocaleString("es-CL", {
     day: "2-digit",
     month: "short",
     year: "numeric",
@@ -493,10 +508,10 @@ export function formatDate(value: string | Date): string {
 
 export function formatMoney(value: number | null | undefined): string {
   if (value === null || value === undefined || Number.isNaN(value)) return "—";
-  return new Intl.NumberFormat("es", {
+  return new Intl.NumberFormat("es-CL", {
     style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 2,
+    currency: "CLP",
+    maximumFractionDigits: 0,
   }).format(value);
 }
 

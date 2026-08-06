@@ -1,4 +1,3 @@
-import { packRecipeCategory } from "../shared/recipeMeta";
 import { buildShoppingLines, roundQty } from "../shared/shopping";
 import {
   quoteTotal,
@@ -58,6 +57,7 @@ type IngredientRow = {
   unit: IngredientUnit;
   supplier_id: number | null;
   unit_price: number | null;
+  stock_qty?: number | null;
   created_at: string;
   updated_at: string;
 };
@@ -67,6 +67,7 @@ type RecipeRow = {
   name: string;
   yield_portions: number;
   category: string | null;
+  suitable_services?: ServiceType[] | null;
   instructions: string | null;
   estimated_cost: number | null;
   created_at: string;
@@ -171,6 +172,7 @@ function mapIngredient(row: IngredientRow, supplierName?: string | null): Ingred
     unit: row.unit,
     supplierId: row.supplier_id,
     unitPrice: row.unit_price,
+    stockQty: row.stock_qty ?? 0,
     supplierName: supplierName ?? null,
     createdAt: iso(row.created_at),
     updatedAt: iso(row.updated_at),
@@ -199,7 +201,7 @@ async function loadRecipe(id: number): Promise<Recipe> {
     name: recipe.name,
     yieldPortions: recipe.yield_portions,
     category: recipe.category,
-    suitableServices: [],
+    suitableServices: recipe.suitable_services ?? [],
     instructions: recipe.instructions,
     estimatedCost: recipe.estimated_cost,
     ingredients: (links as RecipeIngredientRow[]).map((l) => {
@@ -645,6 +647,7 @@ export const cloud = {
         unit: body.unit,
         supplier_id: body.supplierId ?? null,
         unit_price: body.unitPrice ?? null,
+        stock_qty: body.stockQty ?? 0,
       })
       .select("*")
       .single();
@@ -669,6 +672,7 @@ export const cloud = {
         unit: body.unit,
         supplier_id: body.supplierId ?? null,
         unit_price: body.unitPrice ?? null,
+        stock_qty: body.stockQty ?? 0,
         updated_at: new Date().toISOString(),
       })
       .eq("id", id)
@@ -709,13 +713,14 @@ export const cloud = {
   getRecipe: (id: number) => loadRecipe(id),
 
   async createRecipe(body: RecipeInput): Promise<Recipe> {
-    const category = packRecipeCategory(body.category, body.suitableServices);
+    const category = body.category?.startsWith("svc:") ? null : body.category ?? null;
     const { data, error } = await getSupabase()
       .from("recipes")
       .insert({
         name: body.name,
         yield_portions: body.yieldPortions,
         category,
+        suitable_services: body.suitableServices ?? [],
         instructions: body.instructions ?? null,
         estimated_cost: body.estimatedCost ?? null,
       })
@@ -727,13 +732,14 @@ export const cloud = {
   },
 
   async updateRecipe(id: number, body: RecipeInput): Promise<Recipe> {
-    const category = packRecipeCategory(body.category, body.suitableServices);
+    const category = body.category?.startsWith("svc:") ? null : body.category ?? null;
     const { data, error } = await getSupabase()
       .from("recipes")
       .update({
         name: body.name,
         yield_portions: body.yieldPortions,
         category,
+        suitable_services: body.suitableServices ?? [],
         instructions: body.instructions ?? null,
         estimated_cost: body.estimatedCost ?? null,
         updated_at: new Date().toISOString(),
@@ -867,6 +873,7 @@ export const cloud = {
     }
 
     const detail = await loadEventDetail(eventId);
+    const stockById = new Map<number, number>();
     const recipesForShopping = await Promise.all(
       detail.recipes.map(async (er) => {
         const recipe = await loadRecipe(er.recipeId);
@@ -886,6 +893,9 @@ export const cloud = {
           : { data: [] as Array<{ id: number; name: string }> };
         const supplierName = new Map((suppliers ?? []).map((s) => [s.id, s.name]));
         const byId = new Map(((ings as IngredientRow[] | null) ?? []).map((i) => [i.id, i]));
+        for (const [id, row] of byId) {
+          stockById.set(id, row.stock_qty ?? 0);
+        }
 
         return {
           yieldPortions: recipe.yieldPortions,
@@ -908,10 +918,12 @@ export const cloud = {
       }),
     );
 
-    const lines = buildShoppingLines(recipesForShopping).map((l) => ({
-      ...l,
-      quantity: roundQty(l.quantity),
-    }));
+    const lines = buildShoppingLines(recipesForShopping)
+      .map((l) => {
+        const stock = stockById.get(l.ingredientId) ?? 0;
+        return { ...l, quantity: roundQty(Math.max(0, l.quantity - stock)) };
+      })
+      .filter((l) => l.quantity > 0);
 
     if (existing) {
       await db.from("shopping_lists").delete().eq("id", (existing as ShoppingListRow).id);

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, formatDate, type Dashboard } from "../api";
+import { api, canClearAllData, formatDate, getDataMode, type Dashboard } from "../api";
 import { PageHeader } from "../components/EmptyState";
 import { StatusBadge } from "../components/StatusBadge";
 
@@ -12,6 +12,7 @@ export function HomePage() {
   const [demoSeeded, setDemoSeeded] = useState(api.wasDemoSeeded());
   const [busy, setBusy] = useState(false);
   const [seedMsg, setSeedMsg] = useState("");
+  const mode = getDataMode();
 
   async function load() {
     setLoading(true);
@@ -47,6 +48,10 @@ export function HomePage() {
   }
 
   async function onClear() {
+    if (!canClearAllData()) {
+      setSeedMsg("En modo servidor no se puede borrar todo desde aquí.");
+      return;
+    }
     if (!window.confirm("¿Borrar todos los datos de este almacenamiento?")) return;
     setBusy(true);
     setSeedMsg("");
@@ -72,6 +77,19 @@ export function HomePage() {
         subtitle="Resumen simple de lo que viene y lo que falta."
       />
 
+      {mode === "static" ? (
+        <section className="panel demo-panel" style={{ marginBottom: 16 }}>
+          <h2>Activa la nube para el equipo</h2>
+          <p className="meta">
+            Ahora mismo los datos quedan solo en este dispositivo. Para que el celular y el PC
+            vean lo mismo, conecta Supabase (pasos en Ajustes).
+          </p>
+          <Link className="btn primary" to="/ajustes">
+            Ir a Ajustes
+          </Link>
+        </section>
+      ) : null}
+
       {empty && (
         <section className="panel demo-panel">
           <h2>Empieza con un ejemplo</h2>
@@ -88,7 +106,7 @@ export function HomePage() {
         </section>
       )}
 
-      {!empty && demoSeeded && (
+      {!empty && demoSeeded && canClearAllData() && (
         <section className="panel demo-panel demo-panel-soft">
           <p className="meta" style={{ margin: 0 }}>
             Estás viendo datos de ejemplo.{" "}

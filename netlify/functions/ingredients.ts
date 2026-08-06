@@ -14,6 +14,7 @@ export default async (req: Request, _context: Context) => {
         unit: ingredients.unit,
         supplierId: ingredients.supplierId,
         unitPrice: ingredients.unitPrice,
+        stockQty: ingredients.stockQty,
         createdAt: ingredients.createdAt,
         updatedAt: ingredients.updatedAt,
         supplierName: suppliers.name,
@@ -44,6 +45,7 @@ export default async (req: Request, _context: Context) => {
         body.unitPrice === null || body.unitPrice === undefined || body.unitPrice === ""
           ? null
           : asNumber(body.unitPrice),
+      stockQty: asNumber(body.stockQty, 0),
       createdAt: now(),
       updatedAt: now(),
     })

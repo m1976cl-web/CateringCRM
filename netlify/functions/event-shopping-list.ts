@@ -64,6 +64,7 @@ async function regenerate(eventId: number) {
           supplierId: ingredients.supplierId,
           supplierName: suppliers.name,
           unitPrice: ingredients.unitPrice,
+          stockQty: ingredients.stockQty,
         })
         .from(recipeIngredients)
         .innerJoin(ingredients, eq(recipeIngredients.ingredientId, ingredients.id))
@@ -73,15 +74,31 @@ async function regenerate(eventId: number) {
       return {
         yieldPortions: m.yieldPortions,
         portions: m.portions,
-        ingredients: ings,
+        ingredients: ings.map(({ stockQty: _s, ...rest }) => rest),
       };
     }),
   );
 
-  const lines = buildShoppingLines(recipesForShopping).map((l) => ({
-    ...l,
-    quantity: roundQty(l.quantity),
-  }));
+  const stockById = new Map<number, number>();
+  for (const m of recipesForShopping) {
+    for (const ing of m.ingredients) {
+      if (!stockById.has(ing.ingredientId)) {
+        const [row] = await db
+          .select({ stockQty: ingredients.stockQty })
+          .from(ingredients)
+          .where(eq(ingredients.id, ing.ingredientId))
+          .limit(1);
+        stockById.set(ing.ingredientId, row?.stockQty ?? 0);
+      }
+    }
+  }
+
+  const lines = buildShoppingLines(recipesForShopping)
+    .map((l) => {
+      const stock = stockById.get(l.ingredientId) ?? 0;
+      return { ...l, quantity: roundQty(Math.max(0, l.quantity - stock)) };
+    })
+    .filter((l) => l.quantity > 0);
 
   const existing = await db
     .select()

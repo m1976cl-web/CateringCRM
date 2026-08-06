@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, formatDate, formatMoney, type QuoteDetail } from "../api";
+import { loadCompanySettings } from "../settings";
 import { QUOTE_STATUS_LABELS } from "../../shared/types";
 
 export function QuotePrintPage() {
   const { id } = useParams();
   const [quote, setQuote] = useState<QuoteDetail | null>(null);
   const [error, setError] = useState("");
+  const settings = loadCompanySettings();
 
   useEffect(() => {
     let alive = true;
@@ -26,6 +28,9 @@ export function QuotePrintPage() {
   if (error) return <div className="error-box" style={{ margin: 24 }}>{error}</div>;
   if (!quote) return <div className="loading">Cargando cotización…</div>;
 
+  const validUntil = new Date(quote.quoteDate);
+  validUntil.setDate(validUntil.getDate() + (settings.quoteValidityDays || 15));
+
   return (
     <div className="print-page">
       <div className="print-actions">
@@ -37,16 +42,21 @@ export function QuotePrintPage() {
         </Link>
       </div>
 
-      <header style={{ display: "flex", justifyContent: "space-between", gap: 16 }}>
+      <header className="print-header">
         <div>
-          <h1 style={{ margin: 0, fontFamily: "Fraunces, Georgia, serif" }}>Cotización</h1>
-          <p style={{ margin: "6px 0 0", color: "#555" }}>CateringCRM</p>
+          <h1 style={{ margin: 0, fontFamily: "Fraunces, Georgia, serif" }}>
+            {settings.companyName || "Cotización"}
+          </h1>
+          <p className="print-company-meta">
+            {[settings.phone, settings.email, settings.address].filter(Boolean).join(" · ")}
+          </p>
         </div>
         <div style={{ textAlign: "right" }}>
           <div>
             <strong>{quote.quoteNumber || `#${quote.id}`}</strong>
           </div>
           <div>{formatDate(quote.quoteDate)}</div>
+          <div>Válida hasta {validUntil.toLocaleDateString("es-CL")}</div>
           <div>{QUOTE_STATUS_LABELS[quote.status]}</div>
         </div>
       </header>
@@ -96,6 +106,13 @@ export function QuotePrintPage() {
         <section style={{ marginTop: 24 }}>
           <h3>Notas</h3>
           <p style={{ whiteSpace: "pre-wrap" }}>{quote.notes}</p>
+        </section>
+      ) : null}
+
+      {settings.quoteNotes ? (
+        <section className="print-terms">
+          <h3>Condiciones</h3>
+          <p style={{ whiteSpace: "pre-wrap" }}>{settings.quoteNotes}</p>
         </section>
       ) : null}
     </div>

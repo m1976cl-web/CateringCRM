@@ -5,7 +5,7 @@ import { EmptyState, PageHeader } from "../components/EmptyState";
 import { FormField } from "../components/FormField";
 import { INGREDIENT_UNITS, type IngredientUnit } from "../../shared/types";
 
-const blank = { name: "", unit: "g" as IngredientUnit, supplierId: "", unitPrice: "" };
+const blank = { name: "", unit: "g" as IngredientUnit, supplierId: "", unitPrice: "", stockQty: "0" };
 
 export function IngredientsPage() {
   const [rows, setRows] = useState<Ingredient[]>([]);
@@ -47,6 +47,7 @@ export function IngredientsPage() {
       unit: row.unit,
       supplierId: row.supplierId != null ? String(row.supplierId) : "",
       unitPrice: row.unitPrice != null ? String(row.unitPrice) : "",
+      stockQty: String(row.stockQty ?? 0),
     });
   }
 
@@ -59,6 +60,7 @@ export function IngredientsPage() {
         unit: form.unit,
         supplierId: form.supplierId === "" ? null : Number(form.supplierId),
         unitPrice: form.unitPrice === "" ? null : Number(form.unitPrice),
+        stockQty: form.stockQty === "" ? 0 : Number(form.stockQty),
       };
       if (editingId) await api.updateIngredient(editingId, payload);
       else await api.createIngredient(payload);
@@ -119,12 +121,24 @@ export function IngredientsPage() {
               <input
                 type="number"
                 min={0}
-                step="0.01"
+                step="1"
                 value={form.unitPrice}
                 onChange={(e) => setForm({ ...form, unitPrice: e.target.value })}
               />
             </FormField>
           </div>
+          <FormField
+            label="Stock en bodega"
+            hint="La lista de compras resta este stock de lo que hay que comprar."
+          >
+            <input
+              type="number"
+              min={0}
+              step="0.001"
+              value={form.stockQty}
+              onChange={(e) => setForm({ ...form, stockQty: e.target.value })}
+            />
+          </FormField>
           <FormField label="Proveedor">
             <select
               value={form.supplierId}
@@ -165,6 +179,7 @@ export function IngredientsPage() {
                     <th>Unidad</th>
                     <th>Proveedor</th>
                     <th>Precio</th>
+                    <th>Stock</th>
                     <th></th>
                   </tr>
                 </thead>
@@ -175,6 +190,9 @@ export function IngredientsPage() {
                       <td>{row.unit}</td>
                       <td>{row.supplierName ?? "—"}</td>
                       <td>{formatMoney(row.unitPrice)}</td>
+                      <td>
+                        {row.stockQty ?? 0} {row.unit}
+                      </td>
                       <td>
                         <div className="page-actions">
                           <button type="button" className="btn" onClick={() => startEdit(row)}>

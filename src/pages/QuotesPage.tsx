@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   api,
   formatDate,
   formatMoney,
   toDatetimeLocal,
+  type EventDetail,
   type EventSummary,
   type QuoteSummary,
 } from "../api";
@@ -12,9 +13,11 @@ import { ConfirmDialog } from "../components/ConfirmDialog";
 import { EmptyState, PageHeader } from "../components/EmptyState";
 import { FormField } from "../components/FormField";
 import { QuoteBadge } from "../components/StatusBadge";
+import { estimateFoodCost } from "../../shared/shopping";
 import {
   QUOTE_STATUSES,
   QUOTE_STATUS_LABELS,
+  SERVICE_TYPE_LABELS,
   quoteTotal,
   type QuoteItem,
   type QuoteStatus,
@@ -22,7 +25,30 @@ import {
 
 const blankItem = (): QuoteItem => ({ description: "", quantity: 1, unitPrice: 0 });
 
+function whatsappQuoteUrl(q: {
+  quoteNumber: string | null;
+  id: number;
+  clientName: string;
+  eventTitle: string;
+  total: number;
+  items: QuoteItem[];
+}): string {
+  const lines = [
+    `Cotización ${q.quoteNumber || `#${q.id}`}`,
+    `Cliente: ${q.clientName}`,
+    `Evento: ${q.eventTitle}`,
+    "",
+    ...q.items.map(
+      (i) => `• ${i.description}: ${i.quantity} × ${formatMoney(i.unitPrice)}`,
+    ),
+    "",
+    `Total: ${formatMoney(q.total)}`,
+  ];
+  return `https://wa.me/?text=${encodeURIComponent(lines.join("\n"))}`;
+}
+
 export function QuotesPage() {
+  const [searchParams] = useSearchParams();
   const [quotes, setQuotes] = useState<QuoteSummary[]>([]);
   const [events, setEvents] = useState<EventSummary[]>([]);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -36,6 +62,7 @@ export function QuotesPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [prefillDone, setPrefillDone] = useState(false);
 
   const total = useMemo(() => quoteTotal(items), [items]);
 
@@ -57,6 +84,20 @@ export function QuotesPage() {
     void load();
   }, []);
 
+  useEffect(() => {
+    const fromUrl = searchParams.get("eventId");
+    if (!fromUrl || prefillDone || events.length === 0) return;
+    setEventId(fromUrl);
+    void (async () => {
+      try {
+        await fillFromEventId(Number(fromUrl));
+        setPrefillDone(true);
+      } catch {
+        setPrefillDone(true);
+      }
+    })();
+  }, [searchParams, events, prefillDone]);
+
   function reset() {
     setEditingId(null);
     setEventId("");
@@ -77,21 +118,75 @@ export function QuotesPage() {
     setItems(q.items.length ? q.items : [blankItem()]);
   }
 
-  function fillFromEvent() {
-    const ev = events.find((e) => String(e.id) === eventId);
-    if (!ev) return;
+  async function fillFromEventId(id: number) {
+    const ev = await api.getEvent(id);
+    const ingredients = await api.listIngredients();
+    const recipes = await api.listRecipes();
+    const byIng = new Map(ingredients.map((i) => [i.id, i]));
+    const forCost = ev.recipes.map((row) => {
+      const recipe = recipes.find((r) => r.id === row.recipeId);
+      return {
+        yieldPortions: recipe?.yieldPortions ?? 1,
+        portions: row.portions,
+        ingredients: (recipe?.ingredients ?? []).map((ing) => {
+          const cat = byIng.get(ing.ingredientId);
+          return {
+            ingredientId: ing.ingredientId,
+            name: cat?.name ?? ing.name,
+            unit: cat?.unit ?? ing.unit,
+            quantity: ing.quantity,
+            supplierId: cat?.supplierId ?? null,
+            supplierName: cat?.supplierName ?? null,
+            unitPrice: cat?.unitPrice ?? null,
+          };
+        }),
+      };
+    });
+    const foodCost = estimateFoodCost(forCost);
+    const sale = ev.estimatedCost ?? foodCost;
+    applyEventFill(ev, sale, foodCost);
+  }
+
+  function applyEventFill(ev: EventDetail, sale: number, foodCost: number) {
+    const serviceLines = ev.services.map((s) => ({
+      description: `Servicio: ${SERVICE_TYPE_LABELS[s]}`,
+      quantity: ev.attendees,
+      unitPrice: 0,
+    }));
     setItems([
       {
         description: `Servicio de catering — ${ev.title} (${ev.attendees} personas)`,
         quantity: 1,
-        unitPrice: ev.estimatedCost ?? 0,
+        unitPrice: Math.round(sale),
       },
-      ...ev.services.map((s) => ({
-        description: `Servicio: ${s.replace("_", " ")}`,
-        quantity: ev.attendees,
-        unitPrice: 0,
-      })),
+      ...serviceLines,
+      ...(foodCost > 0
+        ? [
+            {
+              description: `Referencia costo ingredientes (no cobrado)`,
+              quantity: 1,
+              unitPrice: 0,
+            },
+          ]
+        : []),
     ]);
+    setNotes(
+      [
+        ev.dietaryRestrictions ? `Restricciones: ${ev.dietaryRestrictions}` : null,
+        foodCost > 0 ? `Costo ingredientes estimado: ${formatMoney(foodCost)}` : null,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  }
+
+  async function fillFromEvent() {
+    if (!eventId) return;
+    try {
+      await fillFromEventId(Number(eventId));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo rellenar desde el evento");
+    }
   }
 
   async function onSubmit(e: React.FormEvent) {
@@ -134,7 +229,7 @@ export function QuotesPage() {
     <div>
       <PageHeader
         title="Cotizaciones"
-        subtitle="Arma la propuesta, imprímela o guárdala como PDF desde el navegador."
+        subtitle="Arma la propuesta desde el evento, imprímela o compártela por WhatsApp."
       />
       {error ? <div className="error-box">{error}</div> : null}
 
@@ -152,7 +247,7 @@ export function QuotesPage() {
             </select>
           </FormField>
           <div className="form-actions">
-            <button type="button" className="btn" onClick={fillFromEvent} disabled={!eventId}>
+            <button type="button" className="btn" onClick={() => void fillFromEvent()} disabled={!eventId}>
               Rellenar desde evento
             </button>
           </div>
@@ -223,7 +318,7 @@ export function QuotesPage() {
                   <input
                     type="number"
                     min={0}
-                    step="0.01"
+                    step="1"
                     value={item.unitPrice}
                     onChange={(e) => {
                       const next = [...items];
@@ -282,6 +377,14 @@ export function QuotesPage() {
                   </div>
                   <div className="page-actions">
                     <QuoteBadge status={q.status} />
+                    <a
+                      className="btn"
+                      href={whatsappQuoteUrl(q)}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      WhatsApp
+                    </a>
                     <Link className="btn" to={`/cotizaciones/${q.id}/imprimir`}>
                       Imprimir / PDF
                     </Link>
