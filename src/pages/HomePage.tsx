@@ -9,6 +9,7 @@ import {
   isSameCalendarDay,
   type Dashboard,
   type EventSummary,
+  type Ingredient,
   type QuoteSummary,
 } from "../api";
 import { PageHeader } from "../components/EmptyState";
@@ -19,6 +20,7 @@ export function HomePage() {
   const [data, setData] = useState<Dashboard | null>(null);
   const [events, setEvents] = useState<EventSummary[]>([]);
   const [quotes, setQuotes] = useState<QuoteSummary[]>([]);
+  const [ingredients, setIngredients] = useState<Ingredient[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [empty, setEmpty] = useState(false);
@@ -31,16 +33,18 @@ export function HomePage() {
     setLoading(true);
     setError("");
     try {
-      const [d, isEmpty, evs, qs] = await Promise.all([
+      const [d, isEmpty, evs, qs, ings] = await Promise.all([
         api.dashboard(),
         api.isEmpty(),
         api.listEvents(),
         api.listQuotes(),
+        api.listIngredients(),
       ]);
       setData(d);
       setEmpty(isEmpty);
       setEvents(evs);
       setQuotes(qs);
+      setIngredients(ings);
       setDemoSeeded(api.wasDemoSeeded());
     } catch (e) {
       setError(e instanceof Error ? e.message : "No se pudo cargar el inicio");
@@ -94,6 +98,11 @@ export function HomePage() {
     () => quotes.filter((q) => q.status === "enviada" || q.status === "borrador"),
     [quotes],
   );
+  const zeroStock = useMemo(() => {
+    const usesStock = ingredients.some((i) => (i.stockQty ?? 0) > 0);
+    if (!usesStock) return [];
+    return ingredients.filter((i) => (i.stockQty ?? 0) <= 0);
+  }, [ingredients]);
 
   if (loading) return <div className="loading">Cargando resumen…</div>;
   if (error) return <div className="error-box">{error}</div>;
@@ -198,6 +207,22 @@ export function HomePage() {
                   </div>
                 </div>
                 <StatusBadge status={ev.status} />
+              </Link>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {zeroStock.length > 0 ? (
+        <section className="panel" style={{ marginBottom: 16 }}>
+          <h2>Stock en cero</h2>
+          <p className="meta">
+            {zeroStock.length} ingrediente(s) sin bodega. La lista de compras los pedirá completos.
+          </p>
+          <div className="chip-row" style={{ marginTop: 8 }}>
+            {zeroStock.slice(0, 12).map((i) => (
+              <Link key={i.id} to="/ingredientes" className="badge tone-warn">
+                {i.name}
               </Link>
             ))}
           </div>

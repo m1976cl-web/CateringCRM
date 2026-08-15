@@ -6,11 +6,13 @@ import {
   toDatetimeLocal,
   type Client,
   type Ingredient,
+  type QuoteSummary,
   type Recipe,
 } from "../api";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { FormField } from "../components/FormField";
 import { PageHeader } from "../components/EmptyState";
+import { QuoteBadge } from "../components/StatusBadge";
 import { recipeFitsService } from "../../shared/recipeMeta";
 import { estimateFoodCost } from "../../shared/shopping";
 import {
@@ -62,9 +64,11 @@ export function EventDetailPage() {
   const [loading, setLoading] = useState(!isNew || Boolean(searchParams.get("duplicar")));
   const [saving, setSaving] = useState(false);
   const [askDelete, setAskDelete] = useState(false);
+  const [eventQuotes, setEventQuotes] = useState<QuoteSummary[]>([]);
 
   const fechaParam = searchParams.get("fecha");
   const duplicarParam = searchParams.get("duplicar");
+  const clienteParam = searchParams.get("cliente");
 
   useEffect(() => {
     let alive = true;
@@ -84,6 +88,9 @@ export function EventDetailPage() {
         if (isNew) {
           if (fecha && /^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
             setEventDate(`${fecha}T12:00`);
+          }
+          if (clienteParam && /^\d+$/.test(clienteParam)) {
+            setClientId(clienteParam);
           }
           if (duplicarId) {
             const ev = await api.getEvent(duplicarId);
@@ -144,7 +151,7 @@ export function EventDetailPage() {
     return () => {
       alive = false;
     };
-  }, [eventId, isNew, fechaParam, duplicarParam]);
+  }, [eventId, isNew, fechaParam, duplicarParam, clienteParam]);
 
   function setAttendeesAndSync(n: number) {
     const value = Math.max(1, n);
@@ -321,6 +328,20 @@ export function EventDetailPage() {
     }
   }
 
+  useEffect(() => {
+    if (!eventId || isNew) {
+      setEventQuotes([]);
+      return;
+    }
+    let alive = true;
+    void api.listQuotes().then((rows) => {
+      if (alive) setEventQuotes(rows.filter((q) => q.eventId === eventId));
+    });
+    return () => {
+      alive = false;
+    };
+  }, [eventId, isNew]);
+
   if (loading) return <div className="loading">Cargando evento…</div>;
 
   return (
@@ -349,6 +370,77 @@ export function EventDetailPage() {
       />
 
       {error ? <div className="error-box">{error}</div> : null}
+
+      {!isNew && eventId ? (
+        <section className="panel" style={{ marginBottom: 16 }}>
+          <h2 style={{ marginTop: 0 }}>Listo para el día</h2>
+          <ul className="ops-checklist">
+            <li>
+              <span>
+                <strong>Menú</strong>
+                <span className="meta">
+                  {" "}
+                  {menu.length
+                    ? `${menu.length} receta(s) en ${services.length} servicio(s)`
+                    : "Falta armar el menú"}
+                </span>
+              </span>
+              <span className={`badge ${menu.length ? "tone-good" : "tone-warn"}`}>
+                {menu.length ? "Listo" : "Pendiente"}
+              </span>
+            </li>
+            <li>
+              <span>
+                <strong>Compras</strong>
+                <span className="meta"> {menu.length ? "Genera o revisa la lista" : "Primero el menú"}</span>
+              </span>
+              {menu.length ? (
+                <Link className="btn" to={`/compras/${eventId}`}>
+                  Ver compras
+                </Link>
+              ) : (
+                <span className="badge tone-neutral">—</span>
+              )}
+            </li>
+            <li>
+              <span>
+                <strong>Cotización</strong>
+                <span className="meta">
+                  {" "}
+                  {eventQuotes.length
+                    ? `${eventQuotes.length} guardada(s)`
+                    : "Aún no hay propuesta"}
+                </span>
+              </span>
+              {eventQuotes[0] ? (
+                <span className="page-actions">
+                  <QuoteBadge status={eventQuotes[0].status} />
+                  <Link className="btn" to={`/cotizaciones?eventId=${eventId}`}>
+                    Ver
+                  </Link>
+                </span>
+              ) : (
+                <Link className="btn" to={`/cotizaciones?eventId=${eventId}`}>
+                  Cotizar
+                </Link>
+              )}
+            </li>
+            <li>
+              <span>
+                <strong>Producción</strong>
+                <span className="meta"> Hoja para cocina / servicio</span>
+              </span>
+              {menu.length ? (
+                <Link className="btn" to={`/eventos/${eventId}/produccion`}>
+                  Abrir hoja
+                </Link>
+              ) : (
+                <span className="badge tone-neutral">—</span>
+              )}
+            </li>
+          </ul>
+        </section>
+      ) : null}
 
       <form className="panel form-grid" onSubmit={onSubmit}>
         <div className="grid-2">

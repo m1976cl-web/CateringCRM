@@ -1067,7 +1067,9 @@ table.data th {
   }
   .topbar,
   .banner,
-  .nav {
+  .nav,
+  .page-actions,
+  .nav-toggle {
     display: none !important;
   }
 }

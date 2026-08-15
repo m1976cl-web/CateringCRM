@@ -86,6 +86,15 @@ export function ShoppingPage() {
     return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0], "es"));
   }, [list]);
 
+  const remaining = list?.items.filter((i) => !i.purchased).length ?? 0;
+  const estimate = useMemo(() => {
+    if (!list) return 0;
+    return list.items.reduce(
+      (sum, item) => sum + (item.unitPrice != null ? item.quantity * item.unitPrice : 0),
+      0,
+    );
+  }, [list]);
+
   const selectedEvent = events.find((e) => String(e.id) === selectedId);
 
   const serviceSummary = useMemo(() => {
@@ -153,26 +162,31 @@ export function ShoppingPage() {
         actions={
           <div className="page-actions">
             {list && list.items.length > 0 ? (
-              <a
-                className="btn"
-                href={`https://wa.me/?text=${encodeURIComponent(
-                  [
-                    "Lista de compras",
-                    selectedEvent ? selectedEvent.title : "",
-                    "",
-                    ...list.items.map(
-                      (i) =>
-                        `${i.purchased ? "☑" : "☐"} ${i.quantity} ${i.unit} ${i.name}`,
-                    ),
-                  ]
-                    .filter(Boolean)
-                    .join("\n"),
-                )}`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                WhatsApp
-              </a>
+              <>
+                <button type="button" className="btn" onClick={() => window.print()}>
+                  Imprimir
+                </button>
+                <a
+                  className="btn"
+                  href={`https://wa.me/?text=${encodeURIComponent(
+                    [
+                      "Lista de compras",
+                      selectedEvent ? selectedEvent.title : "",
+                      "",
+                      ...list.items.map(
+                        (i) =>
+                          `${i.purchased ? "☑" : "☐"} ${i.quantity} ${i.unit} ${i.name}`,
+                      ),
+                    ]
+                      .filter(Boolean)
+                      .join("\n"),
+                  )}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  WhatsApp
+                </a>
+              </>
             ) : null}
             <button
               type="button"
@@ -245,7 +259,8 @@ export function ShoppingPage() {
         ) : (
           <div className="stack">
             <p className="meta">
-              Agrupado por proveedor · {list.items.length} ítem(s) · generada{" "}
+              Agrupado por proveedor · {list.items.length} ítem(s) · {remaining} pendiente(s)
+              {estimate > 0 ? ` · estimado ${formatMoney(estimate)}` : ""} · generada{" "}
               {formatDate(list.generatedAt)}
             </p>
             {grouped.map(([supplier, items]) => (
