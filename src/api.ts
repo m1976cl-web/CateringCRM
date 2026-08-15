@@ -506,6 +506,31 @@ export function formatDate(value: string | Date): string {
   });
 }
 
+export function formatDateOnly(value: string | Date): string {
+  const d = typeof value === "string" ? new Date(value) : value;
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString("es-CL", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+export function isSameCalendarDay(a: string | Date, b: Date = new Date()): boolean {
+  const d = typeof a === "string" ? new Date(a) : a;
+  if (Number.isNaN(d.getTime())) return false;
+  return (
+    d.getFullYear() === b.getFullYear() &&
+    d.getMonth() === b.getMonth() &&
+    d.getDate() === b.getDate()
+  );
+}
+
+export function toDateInput(value: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
+}
+
 export function formatMoney(value: number | null | undefined): string {
   if (value === null || value === undefined || Number.isNaN(value)) return "—";
   return new Intl.NumberFormat("es-CL", {

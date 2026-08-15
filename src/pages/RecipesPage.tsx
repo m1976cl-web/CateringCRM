@@ -1,9 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, type Ingredient, type Recipe } from "../api";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { EmptyState, PageHeader } from "../components/EmptyState";
 import { FormField } from "../components/FormField";
+import { SearchBar } from "../components/SearchBar";
+import { matchesQuery } from "../search";
 import {
   SERVICE_TYPES,
   SERVICE_TYPE_LABELS,
@@ -32,6 +34,7 @@ export function RecipesPage() {
   const [saving, setSaving] = useState(false);
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [filterService, setFilterService] = useState<ServiceType | "">("");
+  const [query, setQuery] = useState("");
 
   async function load() {
     setLoading(true);
@@ -118,12 +121,17 @@ export function RecipesPage() {
     }
   }
 
-  const visible = filterService
-    ? recipes.filter(
-        (r) =>
-          !r.suitableServices.length || r.suitableServices.includes(filterService),
-      )
-    : recipes;
+  const visible = useMemo(() => {
+    const byService = filterService
+      ? recipes.filter(
+          (r) =>
+            !r.suitableServices.length || r.suitableServices.includes(filterService),
+        )
+      : recipes;
+    return byService.filter((r) =>
+      matchesQuery(query, r.name, r.category, r.instructions, ...r.suitableServices),
+    );
+  }, [recipes, filterService, query]);
 
   return (
     <div>
@@ -316,6 +324,11 @@ export function RecipesPage() {
               ))}
             </select>
           </div>
+          <SearchBar
+            value={query}
+            onChange={setQuery}
+            placeholder="Buscar receta…"
+          />
           {loading ? (
             <div className="loading">Cargando…</div>
           ) : visible.length === 0 ? (
@@ -350,6 +363,17 @@ export function RecipesPage() {
                   <div className="page-actions">
                     <button type="button" className="btn" onClick={() => startEdit(r)}>
                       Editar
+                    </button>
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={() => {
+                        startEdit(r);
+                        setEditingId(null);
+                        setForm((prev) => ({ ...prev, name: `${r.name} (copia)` }));
+                      }}
+                    >
+                      Duplicar
                     </button>
                     <button
                       type="button"

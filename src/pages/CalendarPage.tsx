@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, formatDate, type EventSummary } from "../api";
+import { api, formatDate, isSameCalendarDay, toDateInput, type EventSummary } from "../api";
 import { PageHeader } from "../components/EmptyState";
 
 const WEEKDAYS = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
@@ -79,7 +79,7 @@ export function CalendarPage() {
     <div>
       <PageHeader
         title="Calendario"
-        subtitle="Vista mensual de tus eventos."
+        subtitle="Vista mensual. Toca “+ evento” en un día para crear uno."
         actions={
           <div className="page-actions">
             <button
@@ -120,10 +120,11 @@ export function CalendarPage() {
           ))}
           {cells.map(({ date, inMonth }) => {
             const dayEvents = eventsOn(date);
+            const today = isSameCalendarDay(date);
             return (
               <div
                 key={date.toISOString()}
-                className={`cal-day ${inMonth ? "" : "muted"}`}
+                className={`cal-day ${inMonth ? "" : "muted"} ${today ? "today" : ""}`}
               >
                 <strong>{date.getDate()}</strong>
                 {dayEvents.map((ev) => (
@@ -131,6 +132,11 @@ export function CalendarPage() {
                     {ev.title}
                   </Link>
                 ))}
+                {inMonth ? (
+                  <Link className="cal-day-add" to={`/eventos/nuevo?fecha=${toDateInput(date)}`}>
+                    + evento
+                  </Link>
+                ) : null}
               </div>
             );
           })}
