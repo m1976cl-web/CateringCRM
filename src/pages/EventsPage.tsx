@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, formatDate, type EventSummary } from "../api";
 import { EmptyState, PageHeader } from "../components/EmptyState";
+import { SearchBar } from "../components/SearchBar";
 import { StatusBadge } from "../components/StatusBadge";
+import { matchesQuery } from "../search";
 import {
   EVENT_STATUSES,
   EVENT_STATUS_LABELS,
@@ -13,6 +15,7 @@ import {
 export function EventsPage() {
   const [rows, setRows] = useState<EventSummary[]>([]);
   const [filter, setFilter] = useState<EventStatus | "todos">("todos");
+  const [query, setQuery] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -33,10 +36,12 @@ export function EventsPage() {
     };
   }, []);
 
-  const filtered = useMemo(
-    () => (filter === "todos" ? rows : rows.filter((r) => r.status === filter)),
-    [rows, filter],
-  );
+  const filtered = useMemo(() => {
+    const byStatus = filter === "todos" ? rows : rows.filter((r) => r.status === filter);
+    return byStatus.filter((r) =>
+      matchesQuery(query, r.title, r.clientName, r.location, ...r.services.map((s) => SERVICE_TYPE_LABELS[s])),
+    );
+  }, [rows, filter, query]);
 
   return (
     <div>
@@ -48,6 +53,12 @@ export function EventsPage() {
             Nuevo evento
           </Link>
         }
+      />
+
+      <SearchBar
+        value={query}
+        onChange={setQuery}
+        placeholder="Buscar por título, cliente o lugar…"
       />
 
       <div className="chips" style={{ marginBottom: 16 }}>
@@ -75,8 +86,12 @@ export function EventsPage() {
         <div className="loading">Cargando eventos…</div>
       ) : filtered.length === 0 ? (
         <EmptyState
-          title="No hay eventos"
-          description="Crea un evento y asócialo a un cliente."
+          title={query || filter !== "todos" ? "Nada coincide" : "No hay eventos"}
+          description={
+            query || filter !== "todos"
+              ? "Prueba otro filtro o búsqueda."
+              : "Crea un evento y asócialo a un cliente."
+          }
           actionTo="/eventos/nuevo"
           actionLabel="Crear evento"
         />

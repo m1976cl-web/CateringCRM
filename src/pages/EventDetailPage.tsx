@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   api,
   formatMoney,
@@ -39,6 +39,7 @@ function nextMenuKey() {
 
 export function EventDetailPage() {
   const { id } = useParams();
+  const [searchParams] = useSearchParams();
   const isNew = !id || id === "nuevo";
   const eventId = isNew ? null : Number(id);
   const navigate = useNavigate();
@@ -58,9 +59,12 @@ export function EventDetailPage() {
   const [estimatedCost, setEstimatedCost] = useState("");
   const [menu, setMenu] = useState<MenuRow[]>([]);
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(!isNew);
+  const [loading, setLoading] = useState(!isNew || Boolean(searchParams.get("duplicar")));
   const [saving, setSaving] = useState(false);
   const [askDelete, setAskDelete] = useState(false);
+
+  const fechaParam = searchParams.get("fecha");
+  const duplicarParam = searchParams.get("duplicar");
 
   useEffect(() => {
     let alive = true;
@@ -75,7 +79,40 @@ export function EventDetailPage() {
         setClients(c);
         setRecipes(r);
         setIngredients(ings);
-        if (!isNew && eventId) {
+        const fecha = fechaParam;
+        const duplicarId = Number(duplicarParam || 0);
+        if (isNew) {
+          if (fecha && /^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
+            setEventDate(`${fecha}T12:00`);
+          }
+          if (duplicarId) {
+            const ev = await api.getEvent(duplicarId);
+            if (!alive) return;
+            setTitle(`${ev.title} (copia)`);
+            setClientId(String(ev.clientId));
+            setLocation(ev.location ?? "");
+            setAttendees(ev.attendees);
+            setStatus("borrador");
+            setServices(ev.services);
+            setDietary(ev.dietaryRestrictions ?? "");
+            setNotes(ev.notes ?? "");
+            setEstimatedCost(ev.estimatedCost != null ? String(ev.estimatedCost) : "");
+            setMenu(
+              ev.recipes.map((x) => ({
+                key: nextMenuKey(),
+                recipeId: x.recipeId,
+                serviceType: x.serviceType,
+                portions: x.portions,
+                syncAttendees: x.portions === ev.attendees,
+              })),
+            );
+            if (!(fecha && /^\d{4}-\d{2}-\d{2}$/.test(fecha))) {
+              const next = new Date(ev.eventDate);
+              next.setDate(next.getDate() + 7);
+              setEventDate(toDatetimeLocal(next));
+            }
+          }
+        } else if (eventId) {
           const ev = await api.getEvent(eventId);
           if (!alive) return;
           setTitle(ev.title);
@@ -107,7 +144,7 @@ export function EventDetailPage() {
     return () => {
       alive = false;
     };
-  }, [eventId, isNew]);
+  }, [eventId, isNew, fechaParam, duplicarParam]);
 
   function setAttendeesAndSync(n: number) {
     const value = Math.max(1, n);
@@ -183,6 +220,10 @@ export function EventDetailPage() {
     });
     return estimateFoodCost(forCost);
   }, [menu, recipes, ingredients]);
+
+  const salePrice = estimatedCost === "" ? 0 : Number(estimatedCost);
+  const marginPct =
+    salePrice > 0 && foodCost > 0 ? Math.round(((salePrice - foodCost) / salePrice) * 100) : null;
 
   const menuByService = useMemo(() => {
     const map = new Map<ServiceType, MenuRow[]>();
@@ -290,6 +331,9 @@ export function EventDetailPage() {
         actions={
           !isNew && eventId ? (
             <>
+              <Link className="btn" to={`/eventos/nuevo?duplicar=${eventId}`}>
+                Duplicar
+              </Link>
               <Link className="btn" to={`/compras/${eventId}`}>
                 Ver compras
               </Link>
@@ -390,7 +434,9 @@ export function EventDetailPage() {
             label="Costo estimado (venta)"
             hint={
               foodCost > 0
-                ? `Costo ingredientes ≈ ${formatMoney(foodCost)}. Puedes usarlo como base.`
+                ? `Costo ingredientes ≈ ${formatMoney(foodCost)}${
+                    marginPct != null ? ` · margen ${marginPct}%` : ""
+                  }. Puedes usarlo como base.`
                 : "Se calcula solo si los ingredientes tienen precio."
             }
           >
@@ -588,6 +634,11 @@ export function EventDetailPage() {
           <Link className="btn ghost" to="/eventos">
             Volver
           </Link>
+          {!isNew && eventId ? (
+            <Link className="btn" to={`/eventos/nuevo?duplicar=${eventId}`}>
+              Duplicar para otra fecha
+            </Link>
+          ) : null}
           {!isNew ? (
             <button type="button" className="btn danger" onClick={() => setAskDelete(true)}>
               Eliminar

@@ -1,8 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api, type Supplier } from "../api";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { EmptyState, PageHeader } from "../components/EmptyState";
 import { FormField } from "../components/FormField";
+import { SearchBar } from "../components/SearchBar";
+import { matchesQuery } from "../search";
+import { whatsappPhoneUrl } from "../whatsapp";
 
 const blank = { name: "", contactName: "", phone: "", email: "", notes: "" };
 
@@ -14,6 +17,7 @@ export function SuppliersPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [query, setQuery] = useState("");
 
   async function load() {
     setLoading(true);
@@ -82,6 +86,11 @@ export function SuppliersPage() {
     }
   }
 
+  const visible = useMemo(
+    () => rows.filter((s) => matchesQuery(query, s.name, s.contactName, s.phone, s.email)),
+    [rows, query],
+  );
+
   return (
     <div>
       <PageHeader title="Proveedores" subtitle="Quién te vende cada producto." />
@@ -138,13 +147,20 @@ export function SuppliersPage() {
 
         <section className="panel">
           <h2>Listado</h2>
+          <SearchBar
+            value={query}
+            onChange={setQuery}
+            placeholder="Buscar proveedor…"
+          />
           {loading ? (
             <div className="loading">Cargando…</div>
-          ) : rows.length === 0 ? (
+          ) : visible.length === 0 ? (
             <EmptyState title="Sin proveedores" description="Agrega tus proveedores habituales." />
           ) : (
             <div className="list" style={{ marginTop: 12 }}>
-              {rows.map((s) => (
+              {visible.map((s) => {
+                const wa = whatsappPhoneUrl(s.phone ?? "");
+                return (
                 <div key={s.id} className="list-item">
                   <div>
                     <h3>{s.name}</h3>
@@ -153,6 +169,11 @@ export function SuppliersPage() {
                     </div>
                   </div>
                   <div className="page-actions">
+                    {wa ? (
+                      <a className="btn" href={wa} target="_blank" rel="noreferrer">
+                        WhatsApp
+                      </a>
+                    ) : null}
                     <button type="button" className="btn" onClick={() => startEdit(s)}>
                       Editar
                     </button>
@@ -165,7 +186,8 @@ export function SuppliersPage() {
                     </button>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </section>

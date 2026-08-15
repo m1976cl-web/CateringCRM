@@ -1,11 +1,24 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, canClearAllData, formatDate, getDataMode, type Dashboard } from "../api";
+import {
+  api,
+  canClearAllData,
+  formatDate,
+  formatMoney,
+  getDataMode,
+  isSameCalendarDay,
+  type Dashboard,
+  type EventSummary,
+  type QuoteSummary,
+} from "../api";
 import { PageHeader } from "../components/EmptyState";
-import { StatusBadge } from "../components/StatusBadge";
+import { QuoteBadge, StatusBadge } from "../components/StatusBadge";
+import { quoteTaxBreakdown } from "../settings";
 
 export function HomePage() {
   const [data, setData] = useState<Dashboard | null>(null);
+  const [events, setEvents] = useState<EventSummary[]>([]);
+  const [quotes, setQuotes] = useState<QuoteSummary[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [empty, setEmpty] = useState(false);
@@ -18,9 +31,16 @@ export function HomePage() {
     setLoading(true);
     setError("");
     try {
-      const [d, isEmpty] = await Promise.all([api.dashboard(), api.isEmpty()]);
+      const [d, isEmpty, evs, qs] = await Promise.all([
+        api.dashboard(),
+        api.isEmpty(),
+        api.listEvents(),
+        api.listQuotes(),
+      ]);
       setData(d);
       setEmpty(isEmpty);
+      setEvents(evs);
+      setQuotes(qs);
       setDemoSeeded(api.wasDemoSeeded());
     } catch (e) {
       setError(e instanceof Error ? e.message : "No se pudo cargar el inicio");
@@ -65,6 +85,15 @@ export function HomePage() {
       setBusy(false);
     }
   }
+
+  const todayEvents = useMemo(
+    () => events.filter((ev) => isSameCalendarDay(ev.eventDate)),
+    [events],
+  );
+  const pendingQuotes = useMemo(
+    () => quotes.filter((q) => q.status === "enviada" || q.status === "borrador"),
+    [quotes],
+  );
 
   if (loading) return <div className="loading">Cargando resumen…</div>;
   if (error) return <div className="error-box">{error}</div>;
@@ -139,6 +168,10 @@ export function HomePage() {
 
       <div className="stat-grid">
         <div className="stat">
+          <strong>{todayEvents.length}</strong>
+          <span>Hoy</span>
+        </div>
+        <div className="stat">
           <strong>{data.counts.events}</strong>
           <span>Eventos</span>
         </div>
@@ -147,14 +180,29 @@ export function HomePage() {
           <span>Clientes</span>
         </div>
         <div className="stat">
-          <strong>{data.counts.recipes}</strong>
-          <span>Recetas</span>
-        </div>
-        <div className="stat">
           <strong>{data.counts.pendingShoppingLists}</strong>
           <span>Compras pendientes</span>
         </div>
       </div>
+
+      {todayEvents.length > 0 ? (
+        <section className="panel" style={{ marginBottom: 16 }}>
+          <h2>Hoy</h2>
+          <div className="list" style={{ marginTop: 12 }}>
+            {todayEvents.map((ev) => (
+              <Link key={ev.id} to={`/eventos/${ev.id}`} className="list-item">
+                <div>
+                  <h3>{ev.title}</h3>
+                  <div className="meta">
+                    {ev.clientName} · {formatDate(ev.eventDate)} · {ev.attendees} personas
+                  </div>
+                </div>
+                <StatusBadge status={ev.status} />
+              </Link>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       <div className="split">
         <section className="panel">
@@ -183,10 +231,31 @@ export function HomePage() {
             {data.alerts.needsAttention} evento(s) aún en borrador o cotizado.
           </p>
           <p className="meta">{data.alerts.confirmedSoon} confirmado(s) en los próximos días.</p>
-          <p className="meta" style={{ marginTop: 16 }}>
-            Tip: abre un evento, elige las recetas del menú y genera la lista de compras con un
-            clic.
-          </p>
+          {pendingQuotes.length ? (
+            <div className="list" style={{ marginTop: 12 }}>
+              {pendingQuotes.slice(0, 5).map((q) => {
+                const tax = quoteTaxBreakdown(q.total);
+                return (
+                  <Link key={q.id} to="/cotizaciones" className="list-item">
+                    <div>
+                      <h3>
+                        {q.quoteNumber || `Cotización #${q.id}`} — {formatMoney(tax.total)}
+                      </h3>
+                      <div className="meta">
+                        {q.clientName} · {q.eventTitle}
+                      </div>
+                    </div>
+                    <QuoteBadge status={q.status} />
+                  </Link>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="meta" style={{ marginTop: 16 }}>
+              Tip: abre un evento, elige las recetas del menú y genera la lista de compras con un
+              clic.
+            </p>
+          )}
         </section>
       </div>
     </div>

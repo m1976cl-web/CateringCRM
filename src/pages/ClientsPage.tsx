@@ -1,24 +1,33 @@
-import { useEffect, useState } from "react";
-import { api, type Client } from "../api";
+import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
+import { api, formatDate, type Client, type EventSummary } from "../api";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { EmptyState, PageHeader } from "../components/EmptyState";
 import { FormField } from "../components/FormField";
+import { SearchBar } from "../components/SearchBar";
+import { StatusBadge } from "../components/StatusBadge";
+import { matchesQuery } from "../search";
+import { whatsappPhoneUrl } from "../whatsapp";
 
 const blank = { name: "", phone: "", email: "", company: "", notes: "" };
 
 export function ClientsPage() {
   const [rows, setRows] = useState<Client[]>([]);
+  const [events, setEvents] = useState<EventSummary[]>([]);
   const [form, setForm] = useState(blank);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [query, setQuery] = useState("");
 
   async function load() {
     setLoading(true);
     try {
-      setRows(await api.listClients());
+      const [clients, evs] = await Promise.all([api.listClients(), api.listEvents()]);
+      setRows(clients);
+      setEvents(evs);
       setError("");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error al cargar clientes");
@@ -41,6 +50,16 @@ export function ClientsPage() {
       notes: c.notes ?? "",
     });
   }
+
+  const visible = useMemo(
+    () => rows.filter((c) => matchesQuery(query, c.name, c.company, c.phone, c.email)),
+    [rows, query],
+  );
+  const clientEvents = useMemo(
+    () => (editingId ? events.filter((e) => e.clientId === editingId) : []),
+    [events, editingId],
+  );
+  const waUrl = whatsappPhoneUrl(form.phone);
 
   function reset() {
     setEditingId(null);
@@ -136,26 +155,56 @@ export function ClientsPage() {
             <button className="btn primary" type="submit" disabled={saving}>
               {saving ? "Guardando…" : editingId ? "Guardar cambios" : "Crear cliente"}
             </button>
+            {waUrl ? (
+              <a className="btn" href={waUrl} target="_blank" rel="noreferrer">
+                WhatsApp
+              </a>
+            ) : null}
             {editingId ? (
               <button className="btn ghost" type="button" onClick={reset}>
                 Cancelar
               </button>
             ) : null}
           </div>
+          {editingId && clientEvents.length > 0 ? (
+            <div>
+              <h3 style={{ marginBottom: 8 }}>Eventos de este cliente</h3>
+              <div className="list">
+                {clientEvents.map((ev) => (
+                  <Link key={ev.id} to={`/eventos/${ev.id}`} className="list-item">
+                    <div>
+                      <h3>{ev.title}</h3>
+                      <div className="meta">
+                        {formatDate(ev.eventDate)} · {ev.attendees} personas
+                      </div>
+                    </div>
+                    <StatusBadge status={ev.status} />
+                  </Link>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </form>
 
         <section className="panel">
           <h2>Listado</h2>
+          <SearchBar
+            value={query}
+            onChange={setQuery}
+            placeholder="Buscar por nombre, empresa o teléfono…"
+          />
           {loading ? (
             <div className="loading">Cargando…</div>
-          ) : rows.length === 0 ? (
+          ) : visible.length === 0 ? (
             <EmptyState
               title="Aún no hay clientes"
               description="Crea el primero con el formulario de la izquierda."
             />
           ) : (
             <div className="list" style={{ marginTop: 12 }}>
-              {rows.map((c) => (
+              {visible.map((c) => {
+                const wa = whatsappPhoneUrl(c.phone ?? "");
+                return (
                 <div key={c.id} className="list-item">
                   <div>
                     <h3>{c.name}</h3>
@@ -164,6 +213,11 @@ export function ClientsPage() {
                     </div>
                   </div>
                   <div className="page-actions">
+                    {wa ? (
+                      <a className="btn" href={wa} target="_blank" rel="noreferrer">
+                        WhatsApp
+                      </a>
+                    ) : null}
                     <button type="button" className="btn" onClick={() => startEdit(c)}>
                       Editar
                     </button>
@@ -176,7 +230,8 @@ export function ClientsPage() {
                     </button>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </section>

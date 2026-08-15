@@ -1,8 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api, formatMoney, type Ingredient, type Supplier } from "../api";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { EmptyState, PageHeader } from "../components/EmptyState";
 import { FormField } from "../components/FormField";
+import { SearchBar } from "../components/SearchBar";
+import { matchesQuery } from "../search";
 import { INGREDIENT_UNITS, type IngredientUnit } from "../../shared/types";
 
 const blank = { name: "", unit: "g" as IngredientUnit, supplierId: "", unitPrice: "", stockQty: "0" };
@@ -16,6 +18,7 @@ export function IngredientsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [query, setQuery] = useState("");
 
   async function load() {
     setLoading(true);
@@ -85,6 +88,12 @@ export function IngredientsPage() {
       setDeleteId(null);
     }
   }
+
+  const visible = useMemo(
+    () =>
+      rows.filter((r) => matchesQuery(query, r.name, r.supplierName, r.unit)),
+    [rows, query],
+  );
 
   return (
     <div>
@@ -166,9 +175,14 @@ export function IngredientsPage() {
 
         <section className="panel">
           <h2>Catálogo</h2>
+          <SearchBar
+            value={query}
+            onChange={setQuery}
+            placeholder="Buscar ingrediente o proveedor…"
+          />
           {loading ? (
             <div className="loading">Cargando…</div>
-          ) : rows.length === 0 ? (
+          ) : visible.length === 0 ? (
             <EmptyState title="Sin ingredientes" description="Agrega harina, leche, frutas…" />
           ) : (
             <div className="table-wrap" style={{ marginTop: 12 }}>
@@ -184,7 +198,7 @@ export function IngredientsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((row) => (
+                  {visible.map((row) => (
                     <tr key={row.id}>
                       <td>{row.name}</td>
                       <td>{row.unit}</td>

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, formatDate, formatMoney, type QuoteDetail } from "../api";
-import { loadCompanySettings } from "../settings";
+import { loadCompanySettings, quoteTaxBreakdown } from "../settings";
 import { QUOTE_STATUS_LABELS } from "../../shared/types";
 
 export function QuotePrintPage() {
@@ -30,6 +30,7 @@ export function QuotePrintPage() {
 
   const validUntil = new Date(quote.quoteDate);
   validUntil.setDate(validUntil.getDate() + (settings.quoteValidityDays || 15));
+  const tax = quoteTaxBreakdown(quote.total, settings);
 
   return (
     <div className="print-page">
@@ -98,9 +99,21 @@ export function QuotePrintPage() {
         </tbody>
       </table>
 
-      <p style={{ textAlign: "right", fontSize: "1.25rem", marginTop: 16 }}>
-        <strong>Total: {formatMoney(quote.total)}</strong>
-      </p>
+      {tax.addIva ? (
+        <div className="quote-totals">
+          <span>Neto: {formatMoney(tax.net)}</span>
+          <span>
+            IVA {tax.ivaRate}%: {formatMoney(tax.iva)}
+          </span>
+          <p style={{ textAlign: "right", fontSize: "1.25rem", margin: 0 }}>
+            <strong>Total: {formatMoney(tax.total)}</strong>
+          </p>
+        </div>
+      ) : (
+        <p style={{ textAlign: "right", fontSize: "1.25rem", marginTop: 16 }}>
+          <strong>Total: {formatMoney(quote.total)}</strong>
+        </p>
+      )}
 
       {quote.notes ? (
         <section style={{ marginTop: 24 }}>

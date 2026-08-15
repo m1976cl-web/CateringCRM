@@ -143,6 +143,32 @@ export function SettingsPage() {
               }
             />
           </FormField>
+          <FormField
+            label="IVA en cotizaciones"
+            hint="En Chile el IVA general es 19%. Se suma al neto al imprimir y compartir."
+          >
+            <span className="inline-row" style={{ alignItems: "center" }}>
+              <input
+                type="checkbox"
+                checked={settings.addIva}
+                onChange={(e) => setSettings({ ...settings, addIva: e.target.checked })}
+              />
+              Agregar IVA al total
+            </span>
+          </FormField>
+          {settings.addIva ? (
+            <FormField label="Tasa IVA (%)">
+              <input
+                type="number"
+                min={0}
+                max={100}
+                value={settings.ivaRate}
+                onChange={(e) =>
+                  setSettings({ ...settings, ivaRate: Number(e.target.value) || 19 })
+                }
+              />
+            </FormField>
+          ) : null}
           <FormField label="Texto fijo / condiciones">
             <textarea
               value={settings.quoteNotes}

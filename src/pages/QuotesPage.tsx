@@ -13,7 +13,11 @@ import { ConfirmDialog } from "../components/ConfirmDialog";
 import { EmptyState, PageHeader } from "../components/EmptyState";
 import { FormField } from "../components/FormField";
 import { QuoteBadge } from "../components/StatusBadge";
+import { SearchBar } from "../components/SearchBar";
 import { estimateFoodCost } from "../../shared/shopping";
+import { matchesQuery } from "../search";
+import { loadCompanySettings, quoteTaxBreakdown } from "../settings";
+import { whatsappTextUrl } from "../whatsapp";
 import {
   QUOTE_STATUSES,
   QUOTE_STATUS_LABELS,
@@ -31,6 +35,9 @@ function whatsappQuoteUrl(q: {
   clientName: string;
   eventTitle: string;
   total: number;
+  iva: number;
+  ivaRate: number;
+  grandTotal: number;
   items: QuoteItem[];
 }): string {
   const lines = [
@@ -42,9 +49,11 @@ function whatsappQuoteUrl(q: {
       (i) => `• ${i.description}: ${i.quantity} × ${formatMoney(i.unitPrice)}`,
     ),
     "",
-    `Total: ${formatMoney(q.total)}`,
+    `Neto: ${formatMoney(q.total)}`,
+    ...(q.iva > 0 ? [`IVA ${q.ivaRate}%: ${formatMoney(q.iva)}`] : []),
+    `Total: ${formatMoney(q.grandTotal)}`,
   ];
-  return `https://wa.me/?text=${encodeURIComponent(lines.join("\n"))}`;
+  return whatsappTextUrl(lines.join("\n"));
 }
 
 export function QuotesPage() {
@@ -63,8 +72,18 @@ export function QuotesPage() {
   const [saving, setSaving] = useState(false);
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [prefillDone, setPrefillDone] = useState(false);
+  const [query, setQuery] = useState("");
+  const settings = loadCompanySettings();
 
   const total = useMemo(() => quoteTotal(items), [items]);
+  const tax = useMemo(() => quoteTaxBreakdown(total, settings), [total, settings]);
+  const visibleQuotes = useMemo(
+    () =>
+      quotes.filter((q) =>
+        matchesQuery(query, q.quoteNumber, q.clientName, q.eventTitle, q.status),
+      ),
+    [quotes, query],
+  );
 
   async function load() {
     setLoading(true);
@@ -336,9 +355,19 @@ export function QuotesPage() {
                 </button>
               </div>
             ))}
-            <p>
-              <strong>Total: {formatMoney(total)}</strong>
-            </p>
+            <div className="quote-totals">
+              {tax.addIva ? (
+                <>
+                  <span className="meta">Neto: {formatMoney(tax.net)}</span>
+                  <span className="meta">
+                    IVA {tax.ivaRate}%: {formatMoney(tax.iva)}
+                  </span>
+                  <strong className="grand">Total: {formatMoney(tax.total)}</strong>
+                </>
+              ) : (
+                <strong className="grand">Total: {formatMoney(tax.total)}</strong>
+              )}
+            </div>
           </div>
 
           <FormField label="Notas">
@@ -359,27 +388,40 @@ export function QuotesPage() {
 
         <section className="panel">
           <h2>Guardadas</h2>
+          <SearchBar
+            value={query}
+            onChange={setQuery}
+            placeholder="Buscar cotización, cliente o evento…"
+          />
           {loading ? (
             <div className="loading">Cargando…</div>
-          ) : quotes.length === 0 ? (
+          ) : visibleQuotes.length === 0 ? (
             <EmptyState title="Sin cotizaciones" description="Crea la primera desde un evento." />
           ) : (
             <div className="list" style={{ marginTop: 12 }}>
-              {quotes.map((q) => (
+              {visibleQuotes.map((q) => {
+                const rowTax = quoteTaxBreakdown(q.total, settings);
+                return (
                 <div key={q.id} className="list-item">
                   <div>
                     <h3>
-                      {q.quoteNumber || `Cotización #${q.id}`} — {formatMoney(q.total)}
+                      {q.quoteNumber || `Cotización #${q.id}`} — {formatMoney(rowTax.total)}
                     </h3>
                     <div className="meta">
                       {q.clientName} · {q.eventTitle} · {formatDate(q.quoteDate)}
+                      {rowTax.addIva ? ` · IVA ${rowTax.ivaRate}% incluido` : ""}
                     </div>
                   </div>
                   <div className="page-actions">
                     <QuoteBadge status={q.status} />
                     <a
                       className="btn"
-                      href={whatsappQuoteUrl(q)}
+                      href={whatsappQuoteUrl({
+                        ...q,
+                        iva: rowTax.iva,
+                        ivaRate: rowTax.ivaRate,
+                        grandTotal: rowTax.total,
+                      })}
                       target="_blank"
                       rel="noreferrer"
                     >
@@ -400,7 +442,8 @@ export function QuotesPage() {
                     </button>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </section>
