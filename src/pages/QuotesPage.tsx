@@ -17,6 +17,7 @@ import { SearchBar } from "../components/SearchBar";
 import { estimateFoodCost } from "../../shared/shopping";
 import { matchesQuery } from "../search";
 import { loadCompanySettings, quoteTaxBreakdown } from "../settings";
+import { nextQuoteNumber } from "../quotes";
 import { whatsappTextUrl } from "../whatsapp";
 import {
   QUOTE_STATUSES,
@@ -92,15 +93,19 @@ export function QuotesPage() {
       setQuotes(q);
       setEvents(e);
       setError("");
+      return q;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al cargar");
+      return [] as QuoteSummary[];
     } finally {
       setLoading(false);
     }
   }
 
   useEffect(() => {
-    void load();
+    void load().then((q) => {
+      setQuoteNumber((cur) => cur || nextQuoteNumber(q));
+    });
   }, []);
 
   useEffect(() => {
@@ -117,10 +122,10 @@ export function QuotesPage() {
     })();
   }, [searchParams, events, prefillDone]);
 
-  function reset() {
+  function reset(list: QuoteSummary[] = quotes) {
     setEditingId(null);
     setEventId("");
-    setQuoteNumber("");
+    setQuoteNumber(nextQuoteNumber(list));
     setQuoteDate(toDatetimeLocal(new Date()));
     setStatus("borrador");
     setNotes("");
@@ -135,6 +140,16 @@ export function QuotesPage() {
     setStatus(q.status);
     setNotes(q.notes ?? "");
     setItems(q.items.length ? q.items : [blankItem()]);
+  }
+
+  function duplicateQuote(q: QuoteSummary) {
+    setEditingId(null);
+    setEventId(String(q.eventId));
+    setQuoteNumber(nextQuoteNumber(quotes));
+    setQuoteDate(toDatetimeLocal(new Date()));
+    setStatus("borrador");
+    setNotes(q.notes ?? "");
+    setItems(q.items.length ? q.items.map((i) => ({ ...i })) : [blankItem()]);
   }
 
   async function fillFromEventId(id: number) {
@@ -214,7 +229,7 @@ export function QuotesPage() {
     try {
       const payload = {
         eventId: Number(eventId),
-        quoteNumber: quoteNumber || null,
+        quoteNumber: quoteNumber.trim() || nextQuoteNumber(quotes),
         quoteDate: new Date(quoteDate).toISOString(),
         items: items.filter((i) => i.description.trim() && i.quantity > 0),
         notes: notes || null,
@@ -222,8 +237,8 @@ export function QuotesPage() {
       };
       if (editingId) await api.updateQuote(editingId, payload);
       else await api.createQuote(payload);
-      reset();
-      await load();
+      const q = await load();
+      reset(q);
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo guardar");
     } finally {
@@ -233,11 +248,12 @@ export function QuotesPage() {
 
   async function confirmDelete() {
     if (!deleteId) return;
+    const wasEditing = editingId === deleteId;
     try {
       await api.deleteQuote(deleteId);
       setDeleteId(null);
-      if (editingId === deleteId) reset();
-      await load();
+      const q = await load();
+      if (wasEditing) reset(q);
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo eliminar");
       setDeleteId(null);
@@ -275,7 +291,7 @@ export function QuotesPage() {
               <input
                 value={quoteNumber}
                 onChange={(e) => setQuoteNumber(e.target.value)}
-                placeholder="COT-001"
+                placeholder="COT-2026-001"
               />
             </FormField>
             <FormField label="Fecha">
@@ -379,7 +395,7 @@ export function QuotesPage() {
               {saving ? "Guardando…" : "Guardar cotización"}
             </button>
             {editingId ? (
-              <button type="button" className="btn ghost" onClick={reset}>
+              <button type="button" className="btn ghost" onClick={() => reset()}>
                 Cancelar
               </button>
             ) : null}
@@ -432,6 +448,9 @@ export function QuotesPage() {
                     </Link>
                     <button type="button" className="btn" onClick={() => startEdit(q)}>
                       Editar
+                    </button>
+                    <button type="button" className="btn" onClick={() => duplicateQuote(q)}>
+                      Duplicar
                     </button>
                     <button
                       type="button"

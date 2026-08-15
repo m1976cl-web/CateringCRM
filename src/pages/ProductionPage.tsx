@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api, formatDate, type EventDetail } from "../api";
+import { api, formatDate, type EventDetail, type Recipe } from "../api";
 import { loadCompanySettings } from "../settings";
 import { SERVICE_TYPE_LABELS, SERVICE_TYPES, type ServiceType } from "../../shared/types";
 
 export function ProductionPage() {
   const { id } = useParams();
   const [event, setEvent] = useState<EventDetail | null>(null);
+  const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [error, setError] = useState("");
   const settings = loadCompanySettings();
 
@@ -14,8 +15,11 @@ export function ProductionPage() {
     let alive = true;
     (async () => {
       try {
-        const data = await api.getEvent(Number(id));
-        if (alive) setEvent(data);
+        const [data, recs] = await Promise.all([api.getEvent(Number(id)), api.listRecipes()]);
+        if (alive) {
+          setEvent(data);
+          setRecipes(recs);
+        }
       } catch (e) {
         if (alive) setError(e instanceof Error ? e.message : "No se pudo cargar");
       }
@@ -76,15 +80,22 @@ export function ProductionPage() {
                 <tr>
                   <th>Receta</th>
                   <th>Porciones</th>
+                  <th>Preparación</th>
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r) => (
+                {rows.map((r) => {
+                  const recipe = recipes.find((x) => x.id === r.recipeId);
+                  return (
                   <tr key={r.id}>
                     <td>{r.recipeName}</td>
                     <td>{r.portions}</td>
+                    <td style={{ whiteSpace: "pre-wrap" }}>
+                      {recipe?.instructions || "—"}
+                    </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </section>

@@ -161,9 +161,14 @@ export function ClientsPage() {
               </a>
             ) : null}
             {editingId ? (
-              <button className="btn ghost" type="button" onClick={reset}>
-                Cancelar
-              </button>
+              <>
+                <Link className="btn" to={`/eventos/nuevo?cliente=${editingId}`}>
+                  Nuevo evento
+                </Link>
+                <button className="btn ghost" type="button" onClick={reset}>
+                  Cancelar
+                </button>
+              </>
             ) : null}
           </div>
           {editingId && clientEvents.length > 0 ? (
