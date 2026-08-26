@@ -26,7 +26,6 @@ import type {
   ShoppingList,
   Supplier,
 } from "./api";
-import { buildDemoPayload, markDemoSeeded } from "./demoSeed";
 import { getSupabase } from "./supabase";
 
 type ClientRow = {
@@ -391,70 +390,6 @@ export const cloud = {
     await db.from("ingredients").delete().neq("id", 0);
     await db.from("suppliers").delete().neq("id", 0);
     await db.from("clients").delete().neq("id", 0);
-    markDemoSeeded(false);
-    return { ok: true };
-  },
-
-  async seedDemo(): Promise<{ ok: boolean }> {
-    if (!(await cloud.isEmpty())) {
-      fail("Ya hay datos. Borra primero si quieres cargar el ejemplo.");
-    }
-    const demo = buildDemoPayload();
-    const clients: Client[] = [];
-    for (const c of demo.clients) clients.push(await cloud.createClient(c));
-
-    const suppliers: Supplier[] = [];
-    for (const s of demo.suppliers) suppliers.push(await cloud.createSupplier(s));
-
-    const ingredientIds = new Map<string, number>();
-    for (let i = 0; i < demo.ingredients.length; i++) {
-      const ing = demo.ingredients[i];
-      const supplierId = i < 4 ? suppliers[0]?.id : suppliers[1]?.id;
-      const created = await cloud.createIngredient({
-        name: ing.name,
-        unit: ing.unit,
-        unitPrice: ing.unitPrice,
-        supplierId: supplierId ?? null,
-      });
-      ingredientIds.set(ing._key, created.id);
-    }
-
-    const recipeIds = new Map<string, number>();
-    for (const recipe of demo.recipes) {
-      const created = await cloud.createRecipe({
-        name: recipe.name,
-        yieldPortions: recipe.yieldPortions,
-        category: recipe.category,
-        suitableServices: recipe.suitableServices,
-        instructions: recipe.instructions,
-        estimatedCost: recipe.estimatedCost,
-        ingredients: recipe._ings.map((key) => ({
-          ingredientId: ingredientIds.get(key)!,
-          quantity: demo.qtyByKey[key] ?? 1,
-        })),
-      });
-      recipeIds.set(recipe._key, created.id);
-    }
-
-    await cloud.createEvent({
-      clientId: clients[demo.event._clientIndex]!.id,
-      title: demo.event.title,
-      eventDate: demo.event.eventDate,
-      location: demo.event.location,
-      attendees: demo.event.attendees,
-      status: demo.event.status,
-      dietaryRestrictions: demo.event.dietaryRestrictions,
-      notes: demo.event.notes,
-      estimatedCost: demo.event.estimatedCost,
-      services: demo.event.services,
-      recipes: demo.event._recipeKeys.map((r) => ({
-        recipeId: recipeIds.get(r.key)!,
-        serviceType: r.serviceType,
-        portions: r.portions,
-      })),
-    });
-
-    markDemoSeeded(true);
     return { ok: true };
   },
 

@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   api,
-  canClearAllData,
   formatDate,
   formatMoney,
   getDataMode,
@@ -24,9 +23,6 @@ export function HomePage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [empty, setEmpty] = useState(false);
-  const [demoSeeded, setDemoSeeded] = useState(api.wasDemoSeeded());
-  const [busy, setBusy] = useState(false);
-  const [seedMsg, setSeedMsg] = useState("");
   const mode = getDataMode();
 
   async function load() {
@@ -45,7 +41,6 @@ export function HomePage() {
       setEvents(evs);
       setQuotes(qs);
       setIngredients(ings);
-      setDemoSeeded(api.wasDemoSeeded());
     } catch (e) {
       setError(e instanceof Error ? e.message : "No se pudo cargar el inicio");
     } finally {
@@ -56,39 +51,6 @@ export function HomePage() {
   useEffect(() => {
     void load();
   }, []);
-
-  async function onSeed() {
-    setBusy(true);
-    setSeedMsg("");
-    try {
-      await api.seedDemo();
-      setSeedMsg("Listo: cargamos clientes, recetas y un evento de ejemplo.");
-      await load();
-    } catch (e) {
-      setSeedMsg(e instanceof Error ? e.message : "No se pudieron cargar los datos de ejemplo");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function onClear() {
-    if (!canClearAllData()) {
-      setSeedMsg("En modo servidor no se puede borrar todo desde aquí.");
-      return;
-    }
-    if (!window.confirm("¿Borrar todos los datos de este almacenamiento?")) return;
-    setBusy(true);
-    setSeedMsg("");
-    try {
-      await api.clearAll();
-      setSeedMsg("Datos borrados. Puedes cargar el ejemplo otra vez o empezar de cero.");
-      await load();
-    } catch (e) {
-      setSeedMsg(e instanceof Error ? e.message : "No se pudieron borrar los datos");
-    } finally {
-      setBusy(false);
-    }
-  }
 
   const todayEvents = useMemo(
     () => events.filter((ev) => isSameCalendarDay(ev.eventDate)),
@@ -116,7 +78,7 @@ export function HomePage() {
       />
 
       {mode === "static" ? (
-        <section className="panel demo-panel" style={{ marginBottom: 16 }}>
+        <section className="panel" style={{ marginBottom: 16 }}>
           <h2>Activa la nube para el equipo</h2>
           <p className="meta">
             Ahora mismo los datos quedan solo en este dispositivo. Para que el celular y el PC
@@ -128,36 +90,14 @@ export function HomePage() {
         </section>
       ) : null}
 
-      {empty && (
-        <section className="panel demo-panel">
-          <h2>Empieza con un ejemplo</h2>
+      {empty ? (
+        <section className="panel" style={{ marginBottom: 16 }}>
+          <h2>Empieza aquí</h2>
           <p className="meta">
-            Aún no hay datos. Carga un set de prueba (clientes, proveedores, recetas y un evento) para
-            ver cómo funciona. Luego puedes editarlo o borrarlo.
+            Aún no hay datos. Registra clientes, ingredientes y recetas, y crea tu primer evento
+            para generar listas de compras y cotizaciones.
           </p>
-          <div className="quick-actions" style={{ marginTop: 12 }}>
-            <button type="button" className="btn primary" disabled={busy} onClick={() => void onSeed()}>
-              {busy ? "Cargando…" : "Cargar datos de ejemplo"}
-            </button>
-          </div>
-          {seedMsg ? <p className="meta" style={{ marginTop: 10 }}>{seedMsg}</p> : null}
         </section>
-      )}
-
-      {!empty && demoSeeded && canClearAllData() && (
-        <section className="panel demo-panel demo-panel-soft">
-          <p className="meta" style={{ margin: 0 }}>
-            Estás viendo datos de ejemplo.{" "}
-            <button type="button" className="linkish" disabled={busy} onClick={() => void onClear()}>
-              Borrar datos de ejemplo
-            </button>
-          </p>
-          {seedMsg ? <p className="meta" style={{ marginTop: 8 }}>{seedMsg}</p> : null}
-        </section>
-      )}
-
-      {!empty && !demoSeeded && seedMsg ? (
-        <p className="meta" style={{ marginBottom: 12 }}>{seedMsg}</p>
       ) : null}
 
       <div className="quick-actions">
