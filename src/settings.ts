@@ -14,7 +14,7 @@ const PIN_KEY = "catering-crm:pin";
 const PIN_UNLOCKED_KEY = "catering-crm:pin-unlocked";
 
 const defaultSettings: CompanySettings = {
-  companyName: "Mi Catering",
+  companyName: "",
   phone: "",
   email: "",
   address: "",

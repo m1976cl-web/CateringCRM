@@ -13,7 +13,6 @@ Pensado para equipos con poco conocimiento técnico: formularios claros, textos 
 - **Ingredientes y proveedores** — catálogo con precios
 - **Lista de compras** — se genera escalando las recetas del evento por porciones
 - **Cotizaciones** — ítems editables + vista imprimible / PDF del navegador
-- **Datos de ejemplo** — en el inicio, si está vacío, un botón carga clientes/recetas/evento de prueba (reversible)
 
 ## Stack
 

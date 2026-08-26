@@ -13,7 +13,6 @@ import type {
   ShoppingListStatus,
   SupplierInput,
 } from "../shared/types";
-import { wasDemoSeeded } from "./demoSeed";
 import { local } from "./localStore";
 import { notifyOfflineFallback } from "./offlineBanner";
 import { isSupabaseConfigured } from "./supabase";
@@ -409,77 +408,6 @@ export const api = {
     }
   },
 
-  seedDemo: async (): Promise<{ ok: boolean }> => {
-    if (USE_SUPABASE) return cloud.seedDemo();
-    if (STATIC_ONLY) return local.seedDemo();
-    try {
-      await remote.health();
-      const { buildDemoPayload, markDemoSeeded } = await import("./demoSeed");
-      const demo = buildDemoPayload();
-      const dash = await remote.dashboard();
-      if (dash.counts.clients > 0 || dash.counts.events > 0 || dash.counts.recipes > 0) {
-        throw new Error("Ya hay datos. Borra primero si quieres cargar el ejemplo.");
-      }
-
-      const clients = [];
-      for (const c of demo.clients) clients.push(await remote.createClient(c));
-      const suppliers = [];
-      for (const s of demo.suppliers) suppliers.push(await remote.createSupplier(s));
-
-      const ingredientIds = new Map<string, number>();
-      for (let i = 0; i < demo.ingredients.length; i++) {
-        const ing = demo.ingredients[i];
-        const created = await remote.createIngredient({
-          name: ing.name,
-          unit: ing.unit,
-          unitPrice: ing.unitPrice,
-          supplierId: (i < 4 ? suppliers[0]?.id : suppliers[1]?.id) ?? null,
-        });
-        ingredientIds.set(ing._key, created.id);
-      }
-
-      const recipeIds = new Map<string, number>();
-      for (const recipe of demo.recipes) {
-        const created = await remote.createRecipe({
-          name: recipe.name,
-          yieldPortions: recipe.yieldPortions,
-          category: recipe.category,
-          suitableServices: recipe.suitableServices,
-          instructions: recipe.instructions,
-          estimatedCost: recipe.estimatedCost,
-          ingredients: recipe._ings.map((key) => ({
-            ingredientId: ingredientIds.get(key)!,
-            quantity: demo.qtyByKey[key] ?? 1,
-          })),
-        });
-        recipeIds.set(recipe._key, created.id);
-      }
-
-      await remote.createEvent({
-        clientId: clients[demo.event._clientIndex]!.id,
-        title: demo.event.title,
-        eventDate: demo.event.eventDate,
-        location: demo.event.location,
-        attendees: demo.event.attendees,
-        status: demo.event.status,
-        dietaryRestrictions: demo.event.dietaryRestrictions,
-        notes: demo.event.notes,
-        estimatedCost: demo.event.estimatedCost,
-        services: demo.event.services,
-        recipes: demo.event._recipeKeys.map((r) => ({
-          recipeId: recipeIds.get(r.key)!,
-          serviceType: r.serviceType,
-          portions: r.portions,
-        })),
-      });
-      markDemoSeeded(true);
-      return { ok: true };
-    } catch (e) {
-      if (e instanceof Error && e.message.includes("Ya hay datos")) throw e;
-      return local.seedDemo();
-    }
-  },
-
   clearAll: async (): Promise<{ ok: boolean }> => {
     if (USE_SUPABASE) return cloud.clearAll();
     if (STATIC_ONLY) return local.clearAll();
@@ -487,8 +415,6 @@ export const api = {
       "En modo servidor no se pueden borrar todos los datos desde aquí. Usa la base de datos o cambia a modo local/nube.",
     );
   },
-
-  wasDemoSeeded: () => wasDemoSeeded(),
 
   exportLocalBackup: (): string => local.exportJson(),
   importLocalBackup: (json: string): { ok: boolean } => local.importJson(json),

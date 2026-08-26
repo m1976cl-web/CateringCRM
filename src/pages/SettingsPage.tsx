@@ -64,6 +64,18 @@ export function SettingsPage() {
     }
   }
 
+  async function onClearAll() {
+    if (!canClearAllData()) return;
+    if (!window.confirm("¿Borrar todos los datos? Esta acción no se puede deshacer.")) return;
+    try {
+      await api.clearAll();
+      setMsg("Todos los datos fueron borrados.");
+      setError("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudieron borrar los datos");
+    }
+  }
+
   return (
     <div>
       <PageHeader
@@ -227,7 +239,13 @@ export function SettingsPage() {
             <p className="meta" style={{ marginTop: 12 }}>
               En modo servidor, el borrado masivo no está disponible desde la app.
             </p>
-          ) : null}
+          ) : (
+            <div className="form-actions" style={{ marginTop: 12 }}>
+              <button type="button" className="btn danger" onClick={() => void onClearAll()}>
+                Borrar todos los datos
+              </button>
+            </div>
+          )}
         </section>
       </div>
     </div>
