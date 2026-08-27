@@ -1,22 +1,27 @@
-import { useRef, useState } from "react";
-import { api, canClearAllData, getDataMode, getDataModeLabel } from "../api";
+import { useEffect, useRef, useState } from "react";
+import { api, canClearAllData, getDataMode, getDataModeLabel, type AuthUser } from "../api";
+import { useAuth } from "../components/AuthGate";
 import { PageHeader } from "../components/EmptyState";
 import { FormField } from "../components/FormField";
-import {
-  getStoredPin,
-  loadCompanySettings,
-  saveCompanySettings,
-  setStoredPin,
-  type CompanySettings,
-} from "../settings";
+import { loadCompanySettings, saveCompanySettings, type CompanySettings } from "../settings";
 
 export function SettingsPage() {
   const mode = getDataMode();
+  const { user } = useAuth();
   const [settings, setSettings] = useState<CompanySettings>(() => loadCompanySettings());
-  const [pin, setPin] = useState(getStoredPin() ?? "");
   const [msg, setMsg] = useState("");
   const [error, setError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
+  const [users, setUsers] = useState<AuthUser[]>([]);
+  const [newName, setNewName] = useState("");
+  const [newEmail, setNewEmail] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [nextPassword, setNextPassword] = useState("");
+
+  useEffect(() => {
+    void api.authListUsers().then(setUsers).catch(() => setUsers([user]));
+  }, [user]);
 
   function saveCompany(e: React.FormEvent) {
     e.preventDefault();
@@ -25,16 +30,32 @@ export function SettingsPage() {
     setError("");
   }
 
-  function savePin(e: React.FormEvent) {
+  async function addUser(e: React.FormEvent) {
     e.preventDefault();
-    const trimmed = pin.trim();
-    if (trimmed && trimmed.length < 4) {
-      setError("El PIN debe tener al menos 4 caracteres, o déjalo vacío para quitarlo.");
-      return;
+    try {
+      await api.authAddUser({ name: newName, email: newEmail, password: newPassword });
+      setUsers(await api.authListUsers());
+      setNewName("");
+      setNewEmail("");
+      setNewPassword("");
+      setMsg("Persona agregada al equipo.");
+      setError("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo agregar");
     }
-    setStoredPin(trimmed || null);
-    setMsg(trimmed ? "PIN activado. Se pedirá al abrir la app." : "PIN desactivado.");
-    setError("");
+  }
+
+  async function changePassword(e: React.FormEvent) {
+    e.preventDefault();
+    try {
+      await api.authChangePassword({ currentPassword, password: nextPassword });
+      setCurrentPassword("");
+      setNextPassword("");
+      setMsg("Contraseña actualizada.");
+      setError("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo cambiar la contraseña");
+    }
   }
 
   function exportBackup() {
@@ -80,7 +101,7 @@ export function SettingsPage() {
     <div>
       <PageHeader
         title="Ajustes"
-        subtitle="Empresa, PIN de acceso, nube y respaldos."
+        subtitle="Empresa, acceso del equipo, nube y respaldos."
       />
       {error ? <div className="error-box">{error}</div> : null}
       {msg ? <p className="meta">{msg}</p> : null}
@@ -192,22 +213,71 @@ export function SettingsPage() {
           </button>
         </form>
 
-        <form className="panel form-grid" onSubmit={savePin}>
-          <h2>PIN de acceso (opcional)</h2>
+        <form className="panel form-grid" onSubmit={(e) => void addUser(e)}>
+          <h2>Equipo</h2>
           <p className="meta">
-            Si defines un PIN, la app lo pedirá al abrir (en este navegador). No reemplaza un login
-            completo.
+            Sesión de {user.name} ({user.email}). En modo servidor, las APIs rechazan peticiones sin
+            login. En Supabase/local el login cierra la app; quien tenga la clave anónima aún podría
+            acceder a la base si el proyecto es público.
           </p>
-          <FormField label="PIN (mín. 4 caracteres, vacío = sin PIN)">
+          {users.length ? (
+            <ul className="checklist">
+              {users.map((u) => (
+                <li key={u.id}>
+                  {u.name} · {u.email}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          <FormField label="Nombre">
+            <input value={newName} onChange={(e) => setNewName(e.target.value)} required />
+          </FormField>
+          <FormField label="Email">
+            <input
+              type="email"
+              value={newEmail}
+              onChange={(e) => setNewEmail(e.target.value)}
+              required
+            />
+          </FormField>
+          <FormField label="Contraseña (mín. 8)">
             <input
               type="password"
-              value={pin}
-              onChange={(e) => setPin(e.target.value)}
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              minLength={8}
+              required
               autoComplete="new-password"
             />
           </FormField>
           <button type="submit" className="btn primary">
-            Guardar PIN
+            Agregar persona
+          </button>
+        </form>
+
+        <form className="panel form-grid" onSubmit={(e) => void changePassword(e)}>
+          <h2>Cambiar mi contraseña</h2>
+          <FormField label="Contraseña actual">
+            <input
+              type="password"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              required
+              autoComplete="current-password"
+            />
+          </FormField>
+          <FormField label="Nueva contraseña">
+            <input
+              type="password"
+              value={nextPassword}
+              onChange={(e) => setNextPassword(e.target.value)}
+              minLength={8}
+              required
+              autoComplete="new-password"
+            />
+          </FormField>
+          <button type="submit" className="btn primary">
+            Guardar contraseña
           </button>
         </form>
 

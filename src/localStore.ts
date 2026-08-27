@@ -1,4 +1,5 @@
 import { applyPurchaseToStock, buildShoppingLines, quantityAfterStock } from "../shared/shopping";
+import { hashPassword, randomToken, sha256Hex, verifyPassword } from "../shared/password";
 import {
   quoteTotal,
   type ClientInput,
@@ -12,19 +13,26 @@ import {
   type ShoppingListStatus,
   type SupplierInput,
 } from "../shared/types";
-import { eventStatusAfterQuote, normalizeDeposit } from "../shared/quoteLifecycle";
+import {
+  eventStatusAfterQuote,
+  paymentsFromQuoteInput,
+  sumPayments,
+} from "../shared/quoteLifecycle";
 import type {
+  AuthUser,
   Client,
   Dashboard,
   EventDetail,
   EventSummary,
   Ingredient,
   QuoteDetail,
+  QuotePayment,
   QuoteSummary,
   Recipe,
   ShoppingList,
   Supplier,
 } from "./api";
+import { getSessionToken } from "./session";
 const KEY = "catering-crm:v1";
 
 type Store = {
@@ -63,6 +71,8 @@ type Store = {
     notes: string | null;
     status: QuoteDetail["status"];
     depositAmount: number;
+    foodCost: number;
+    payments: QuotePayment[];
     createdAt: string;
     updatedAt: string;
   }>;
@@ -72,6 +82,22 @@ type Store = {
     status: ShoppingListStatus;
     generatedAt: string;
     items: ShoppingList["items"];
+  }>;
+  teamUsers: Array<{
+    id: number;
+    email: string;
+    name: string;
+    passwordSalt: string;
+    passwordHash: string;
+    createdAt: string;
+    updatedAt: string;
+  }>;
+  teamSessions: Array<{
+    id: number;
+    userId: number;
+    tokenHash: string;
+    expiresAt: string;
+    createdAt: string;
   }>;
   seq: Record<string, number>;
 };
@@ -85,6 +111,8 @@ function empty(): Store {
     events: [],
     quotes: [],
     shoppingLists: [],
+    teamUsers: [],
+    teamSessions: [],
     seq: {},
   };
 }
@@ -92,7 +120,12 @@ function empty(): Store {
 function read(): Store {
   try {
     const raw = localStorage.getItem(KEY);
-    return raw ? ({ ...empty(), ...(JSON.parse(raw) as Store) } as Store) : empty();
+    if (!raw) return empty();
+    const parsed = { ...empty(), ...(JSON.parse(raw) as Store) } as Store;
+    parsed.teamUsers = parsed.teamUsers ?? [];
+    parsed.teamSessions = parsed.teamSessions ?? [];
+    parsed.quotes = parsed.quotes.map(normalizeStoredQuote);
+    return parsed;
   } catch {
     return empty();
   }
@@ -110,6 +143,30 @@ function nextId(store: Store, table: string): number {
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function normalizeStoredQuote(q: Store["quotes"][number]): Store["quotes"][number] {
+  const existing = Array.isArray(q.payments) ? q.payments : [];
+  const payments =
+    existing.length > 0
+      ? existing
+      : q.depositAmount > 0
+        ? [
+            {
+              id: 1,
+              amount: q.depositAmount,
+              paidAt: q.updatedAt ?? q.createdAt,
+              method: "transferencia" as const,
+              notes: "Anticipo",
+            },
+          ]
+        : [];
+  return {
+    ...q,
+    foodCost: q.foodCost ?? 0,
+    payments,
+    depositAmount: sumPayments(payments),
+  };
 }
 
 function withSupplierName(
@@ -169,6 +226,8 @@ function quoteSummary(store: Store, q: Store["quotes"][number]): QuoteSummary {
     notes: q.notes,
     status: q.status,
     depositAmount: q.depositAmount ?? 0,
+    foodCost: q.foodCost ?? 0,
+    payments: q.payments ?? [],
     eventTitle: ev?.title ?? "—",
     clientName: client?.name ?? "—",
     clientPhone: client?.phone ?? null,
@@ -198,6 +257,48 @@ function syncEventStatusFromQuote(store: Store, eventId: number, quoteStatus: Qu
   if (next === ev.status) return;
   ev.status = next;
   ev.updatedAt = nowIso();
+}
+
+function toPublicUser(row: Store["teamUsers"][number]): AuthUser {
+  return { id: row.id, email: row.email, name: row.name };
+}
+
+function normalizeEmail(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+async function localSessionUser(store: Store): Promise<AuthUser | null> {
+  const token = getSessionToken();
+  if (!token) return null;
+  const tokenHash = await sha256Hex(token);
+  const session = store.teamSessions.find(
+    (s) => s.tokenHash === tokenHash && new Date(s.expiresAt).getTime() > Date.now(),
+  );
+  if (!session) return null;
+  const user = store.teamUsers.find((u) => u.id === session.userId);
+  return user ? toPublicUser(user) : null;
+}
+
+async function createLocalSession(store: Store, userId: number): Promise<string> {
+  const token = randomToken();
+  store.teamSessions.push({
+    id: nextId(store, "teamSessions"),
+    userId,
+    tokenHash: await sha256Hex(token),
+    expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+    createdAt: nowIso(),
+  });
+  return token;
+}
+
+function paymentsForBody(store: Store, body: QuoteInput): QuotePayment[] {
+  return paymentsFromQuoteInput(body).map((p) => ({
+    id: nextId(store, "quotePayments"),
+    amount: p.amount,
+    paidAt: p.paidAt,
+    method: p.method,
+    notes: p.notes ?? null,
+  }));
 }
 
 function fail(message: string): never {
@@ -698,10 +799,14 @@ export const local = {
       total: quoteTotal(body.items),
       notes: body.notes ?? null,
       status: body.status,
-      depositAmount: normalizeDeposit(body.depositAmount),
+      foodCost: Math.max(0, Math.round(Number(body.foodCost) || 0)),
+      payments: [] as QuotePayment[],
+      depositAmount: 0,
       createdAt: nowIso(),
       updatedAt: nowIso(),
     };
+    row.payments = paymentsForBody(store, body);
+    row.depositAmount = sumPayments(row.payments);
     store.quotes.push(row);
     syncEventStatusFromQuote(store, body.eventId, body.status);
     write(store);
@@ -720,9 +825,12 @@ export const local = {
       total: quoteTotal(body.items),
       notes: body.notes ?? null,
       status: body.status,
-      depositAmount: normalizeDeposit(body.depositAmount),
+      foodCost: Math.max(0, Math.round(Number(body.foodCost) || 0)),
+      payments: paymentsForBody(store, body),
+      depositAmount: 0,
       updatedAt: nowIso(),
     };
+    store.quotes[idx].depositAmount = sumPayments(store.quotes[idx].payments);
     syncEventStatusFromQuote(store, body.eventId, body.status);
     write(store);
     return quoteDetail(store, store.quotes[idx]);
@@ -730,6 +838,108 @@ export const local = {
   deleteQuote(id: number) {
     const store = read();
     store.quotes = store.quotes.filter((q) => q.id !== id);
+    write(store);
+    return { ok: true };
+  },
+
+  async authStatus() {
+    const store = read();
+    const configured = store.teamUsers.length > 0;
+    const user = configured ? await localSessionUser(store) : null;
+    return { configured, user };
+  },
+
+  async authSetup(body: { name: string; email: string; password: string }) {
+    const store = read();
+    if (store.teamUsers.length > 0) fail("El acceso del equipo ya está creado");
+    const name = body.name.trim();
+    const email = normalizeEmail(body.email);
+    if (!name) fail("El nombre es obligatorio");
+    if (!email.includes("@")) fail("Indica un email válido");
+    if (body.password.length < 8) fail("La contraseña debe tener al menos 8 caracteres");
+    const hashed = await hashPassword(body.password);
+    const row = {
+      id: nextId(store, "teamUsers"),
+      email,
+      name,
+      passwordSalt: hashed.salt,
+      passwordHash: hashed.hash,
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+    };
+    store.teamUsers.push(row);
+    const token = await createLocalSession(store, row.id);
+    write(store);
+    return { user: toPublicUser(row), token };
+  },
+
+  async authLogin(body: { email: string; password: string }) {
+    const store = read();
+    const email = normalizeEmail(body.email);
+    const row = store.teamUsers.find((u) => u.email === email);
+    if (!row || !(await verifyPassword(body.password, row.passwordSalt, row.passwordHash))) {
+      fail("Email o contraseña incorrectos");
+    }
+    const token = await createLocalSession(store, row.id);
+    write(store);
+    return { user: toPublicUser(row), token };
+  },
+
+  async authLogout() {
+    const store = read();
+    const token = getSessionToken();
+    if (token) {
+      const tokenHash = await sha256Hex(token);
+      store.teamSessions = store.teamSessions.filter((s) => s.tokenHash !== tokenHash);
+      write(store);
+    }
+    return { ok: true };
+  },
+
+  authListUsers(): AuthUser[] {
+    return read().teamUsers.map(toPublicUser);
+  },
+
+  async authAddUser(body: { name: string; email: string; password: string }) {
+    const store = read();
+    if (!(await localSessionUser(store)) && store.teamUsers.length > 0) {
+      fail("Inicia sesión para continuar");
+    }
+    const name = body.name.trim();
+    const email = normalizeEmail(body.email);
+    if (!name) fail("El nombre es obligatorio");
+    if (!email.includes("@")) fail("Indica un email válido");
+    if (body.password.length < 8) fail("La contraseña debe tener al menos 8 caracteres");
+    if (store.teamUsers.some((u) => u.email === email)) fail("Ese email ya tiene acceso");
+    const hashed = await hashPassword(body.password);
+    const row = {
+      id: nextId(store, "teamUsers"),
+      email,
+      name,
+      passwordSalt: hashed.salt,
+      passwordHash: hashed.hash,
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+    };
+    store.teamUsers.push(row);
+    write(store);
+    return { user: toPublicUser(row) };
+  },
+
+  async authChangePassword(body: { currentPassword: string; password: string }) {
+    const store = read();
+    const user = await localSessionUser(store);
+    if (!user) fail("Inicia sesión para continuar");
+    if (body.password.length < 8) fail("La contraseña debe tener al menos 8 caracteres");
+    const row = store.teamUsers.find((u) => u.id === user.id);
+    if (!row) fail("Usuario no encontrado");
+    if (!(await verifyPassword(body.currentPassword, row.passwordSalt, row.passwordHash))) {
+      fail("La contraseña actual no es correcta");
+    }
+    const hashed = await hashPassword(body.password);
+    row.passwordSalt = hashed.salt;
+    row.passwordHash = hashed.hash;
+    row.updatedAt = nowIso();
     write(store);
     return { ok: true };
   },

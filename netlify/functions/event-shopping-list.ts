@@ -13,6 +13,7 @@ import {
 import { applyPurchaseToStock, buildShoppingLines, quantityAfterStock } from "../../shared/shopping";
 import type { IngredientUnit } from "../../shared/types";
 import { error, json, now, parseId, readJson } from "./_shared/http";
+import { denyIfUnauthorized } from "./_shared/auth";
 
 async function loadShoppingList(eventId: number) {
   const [list] = await db
@@ -138,6 +139,9 @@ async function regenerate(eventId: number) {
 }
 
 export default async (req: Request, context: Context) => {
+  const denied = await denyIfUnauthorized(req);
+  if (denied) return denied;
+
   const eventId = parseId(context.params?.id);
   if (!eventId) return error("ID de evento inválido", 400);
 

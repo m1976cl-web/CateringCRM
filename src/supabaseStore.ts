@@ -14,19 +14,27 @@ import {
   type ShoppingListStatus,
   type SupplierInput,
 } from "../shared/types";
-import { eventStatusAfterQuote, normalizeDeposit } from "../shared/quoteLifecycle";
+import {
+  eventStatusAfterQuote,
+  paymentsFromQuoteInput,
+  sumPayments,
+} from "../shared/quoteLifecycle";
+import { hashPassword, randomToken, sha256Hex, verifyPassword } from "../shared/password";
 import type {
+  AuthUser,
   Client,
   Dashboard,
   EventDetail,
   EventSummary,
   Ingredient,
   QuoteDetail,
+  QuotePayment,
   QuoteSummary,
   Recipe,
   ShoppingList,
   Supplier,
 } from "./api";
+import { getSessionToken } from "./session";
 import { getSupabase } from "./supabase";
 
 type ClientRow = {
@@ -106,8 +114,26 @@ type QuoteRow = {
   notes: string | null;
   status: QuoteStatus;
   deposit_amount?: number | null;
+  food_cost?: number | null;
   created_at: string;
   updated_at: string;
+};
+
+type QuotePaymentRow = {
+  id: number;
+  quote_id: number;
+  amount: number;
+  paid_at: string;
+  method: QuotePayment["method"];
+  notes: string | null;
+};
+
+type TeamUserRow = {
+  id: number;
+  email: string;
+  name: string;
+  password_salt: string;
+  password_hash: string;
 };
 
 type ShoppingListRow = {
@@ -156,6 +182,93 @@ async function syncEventFromQuote(eventId: number, quoteStatus: QuoteStatus) {
     .update({ status: next, updated_at: new Date().toISOString() })
     .eq("id", ev.id);
   if (upd) throw new Error(upd.message);
+}
+
+function mapPaymentRow(row: QuotePaymentRow): QuotePayment {
+  return {
+    id: row.id,
+    amount: row.amount,
+    paidAt: iso(row.paid_at),
+    method: row.method,
+    notes: row.notes,
+  };
+}
+
+async function loadPayments(quoteIds: number[]): Promise<Map<number, QuotePayment[]>> {
+  const map = new Map<number, QuotePayment[]>();
+  for (const id of quoteIds) map.set(id, []);
+  if (!quoteIds.length) return map;
+  const { data, error } = await getSupabase()
+    .from("quote_payments")
+    .select("*")
+    .in("quote_id", quoteIds);
+  if (error) throw new Error(error.message);
+  for (const row of (data as QuotePaymentRow[] | null) ?? []) {
+    const list = map.get(row.quote_id);
+    if (list) list.push(mapPaymentRow(row));
+  }
+  for (const list of map.values()) list.sort((a, b) => a.paidAt.localeCompare(b.paidAt));
+  return map;
+}
+
+async function replaceCloudPayments(quoteId: number, body: QuoteInput): Promise<number> {
+  const db = getSupabase();
+  const parsed = paymentsFromQuoteInput(body);
+  const { error: delErr } = await db.from("quote_payments").delete().eq("quote_id", quoteId);
+  if (delErr) throw new Error(delErr.message);
+  if (parsed.length) {
+    const { error: insErr } = await db.from("quote_payments").insert(
+      parsed.map((p) => ({
+        quote_id: quoteId,
+        amount: p.amount,
+        paid_at: p.paidAt,
+        method: p.method,
+        notes: p.notes ?? null,
+      })),
+    );
+    if (insErr) throw new Error(insErr.message);
+  }
+  const deposit = sumPayments(parsed);
+  const { error: updErr } = await db
+    .from("quotes")
+    .update({ deposit_amount: deposit, updated_at: new Date().toISOString() })
+    .eq("id", quoteId);
+  if (updErr) throw new Error(updErr.message);
+  return deposit;
+}
+
+function toPublicUser(row: { id: number; email: string; name: string }): AuthUser {
+  return { id: row.id, email: row.email, name: row.name };
+}
+
+async function cloudSessionUser(): Promise<AuthUser | null> {
+  const token = getSessionToken();
+  if (!token) return null;
+  const tokenHash = await sha256Hex(token);
+  const { data } = await getSupabase()
+    .from("team_sessions")
+    .select("user_id, expires_at")
+    .eq("token_hash", tokenHash)
+    .maybeSingle();
+  const session = data as { user_id: number; expires_at: string } | null;
+  if (!session || new Date(session.expires_at).getTime() <= Date.now()) return null;
+  const { data: user } = await getSupabase()
+    .from("team_users")
+    .select("id, email, name")
+    .eq("id", session.user_id)
+    .maybeSingle();
+  return user ? toPublicUser(user as TeamUserRow) : null;
+}
+
+async function createCloudSession(userId: number): Promise<string> {
+  const token = randomToken();
+  const { error } = await getSupabase().from("team_sessions").insert({
+    user_id: userId,
+    token_hash: await sha256Hex(token),
+    expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+  });
+  if (error) throw new Error(error.message);
+  return token;
 }
 
 function mapClient(row: ClientRow): Client {
@@ -1007,9 +1120,11 @@ export const cloud = {
       : { data: [] as Array<{ id: number; name: string; phone: string | null }> };
     const clientName = new Map((clients ?? []).map((c) => [c.id, c.name]));
     const clientPhone = new Map((clients ?? []).map((c) => [c.id, c.phone ?? null]));
+    const pays = await loadPayments(rows.map((q) => q.id));
 
     return rows.map((q) => {
       const ev = eventMap.get(q.event_id);
+      const payments = pays.get(q.id) ?? [];
       return {
         id: q.id,
         eventId: q.event_id,
@@ -1019,7 +1134,9 @@ export const cloud = {
         total: q.total,
         notes: q.notes,
         status: q.status,
-        depositAmount: q.deposit_amount ?? 0,
+        depositAmount: payments.length ? sumPayments(payments) : (q.deposit_amount ?? 0),
+        foodCost: q.food_cost ?? 0,
+        payments,
         eventTitle: ev?.title ?? "—",
         clientName: ev ? (clientName.get(ev.client_id) ?? "—") : "—",
         clientPhone: ev ? (clientPhone.get(ev.client_id) ?? null) : null,
@@ -1038,6 +1155,7 @@ export const cloud = {
       ? await db.from("clients").select("*").eq("id", event.client_id).maybeSingle()
       : { data: null };
     const c = client as ClientRow | null;
+    const payments = (await loadPayments([q.id])).get(q.id) ?? [];
 
     return {
       id: q.id,
@@ -1048,7 +1166,9 @@ export const cloud = {
       total: q.total,
       notes: q.notes,
       status: q.status,
-      depositAmount: q.deposit_amount ?? 0,
+      depositAmount: payments.length ? sumPayments(payments) : (q.deposit_amount ?? 0),
+      foodCost: q.food_cost ?? 0,
+      payments,
       eventTitle: event?.title ?? "—",
       clientName: c?.name ?? "—",
       createdAt: iso(q.created_at),
@@ -1077,11 +1197,13 @@ export const cloud = {
         total: quoteTotal(body.items),
         notes: body.notes ?? null,
         status: body.status,
-        deposit_amount: normalizeDeposit(body.depositAmount),
+        deposit_amount: 0,
+        food_cost: Math.max(0, Math.round(Number(body.foodCost) || 0)),
       })
       .select("*")
       .single();
     const row = assertOk(data as QuoteRow | null, error, "No se pudo crear la cotización");
+    await replaceCloudPayments(row.id, body);
     await syncEventFromQuote(body.eventId, body.status);
     return cloud.getQuote(row.id);
   },
@@ -1097,19 +1219,129 @@ export const cloud = {
         total: quoteTotal(body.items),
         notes: body.notes ?? null,
         status: body.status,
-        deposit_amount: normalizeDeposit(body.depositAmount),
+        food_cost: Math.max(0, Math.round(Number(body.foodCost) || 0)),
         updated_at: new Date().toISOString(),
       })
       .eq("id", id)
       .select("*")
       .single();
     assertOk(data as QuoteRow | null, error, "Cotización no encontrada");
+    await replaceCloudPayments(id, body);
     await syncEventFromQuote(body.eventId, body.status);
     return cloud.getQuote(id);
   },
 
   async deleteQuote(id: number): Promise<{ ok: boolean }> {
     const { error } = await getSupabase().from("quotes").delete().eq("id", id);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  },
+
+  async authStatus() {
+    const { count, error } = await getSupabase()
+      .from("team_users")
+      .select("id", { count: "exact", head: true });
+    if (error) throw new Error(error.message);
+    const configured = (count ?? 0) > 0;
+    const user = configured ? await cloudSessionUser() : null;
+    return { configured, user };
+  },
+
+  async authSetup(body: { name: string; email: string; password: string }) {
+    const { count } = await getSupabase()
+      .from("team_users")
+      .select("id", { count: "exact", head: true });
+    if ((count ?? 0) > 0) fail("El acceso del equipo ya está creado");
+    const name = body.name.trim();
+    const email = body.email.trim().toLowerCase();
+    if (!name) fail("El nombre es obligatorio");
+    if (!email.includes("@")) fail("Indica un email válido");
+    if (body.password.length < 8) fail("La contraseña debe tener al menos 8 caracteres");
+    const hashed = await hashPassword(body.password);
+    const { data, error } = await getSupabase()
+      .from("team_users")
+      .insert({
+        name,
+        email,
+        password_salt: hashed.salt,
+        password_hash: hashed.hash,
+      })
+      .select("id, email, name")
+      .single();
+    const row = assertOk(data as { id: number; email: string; name: string } | null, error, "No se pudo crear el acceso");
+    const token = await createCloudSession(row.id);
+    return { user: toPublicUser(row), token };
+  },
+
+  async authLogin(body: { email: string; password: string }) {
+    const email = body.email.trim().toLowerCase();
+    const { data, error } = await getSupabase()
+      .from("team_users")
+      .select("*")
+      .eq("email", email)
+      .maybeSingle();
+    const row = data as TeamUserRow | null;
+    if (error || !row || !(await verifyPassword(body.password, row.password_salt, row.password_hash))) {
+      fail("Email o contraseña incorrectos");
+    }
+    const token = await createCloudSession(row.id);
+    return { user: toPublicUser(row), token };
+  },
+
+  async authLogout() {
+    const token = getSessionToken();
+    if (token) {
+      await getSupabase().from("team_sessions").delete().eq("token_hash", await sha256Hex(token));
+    }
+    return { ok: true };
+  },
+
+  async authListUsers(): Promise<AuthUser[]> {
+    const { data, error } = await getSupabase().from("team_users").select("id, email, name");
+    const rows = assertOk(data as Array<{ id: number; email: string; name: string }> | null, error, "No se pudo cargar el equipo");
+    return rows.map(toPublicUser);
+  },
+
+  async authAddUser(body: { name: string; email: string; password: string }) {
+    const name = body.name.trim();
+    const email = body.email.trim().toLowerCase();
+    if (!name) fail("El nombre es obligatorio");
+    if (!email.includes("@")) fail("Indica un email válido");
+    if (body.password.length < 8) fail("La contraseña debe tener al menos 8 caracteres");
+    const hashed = await hashPassword(body.password);
+    const { data, error } = await getSupabase()
+      .from("team_users")
+      .insert({
+        name,
+        email,
+        password_salt: hashed.salt,
+        password_hash: hashed.hash,
+      })
+      .select("id, email, name")
+      .single();
+    const row = assertOk(data as { id: number; email: string; name: string } | null, error, "No se pudo agregar a la persona");
+    return { user: toPublicUser(row) };
+  },
+
+  async authChangePassword(body: { currentPassword: string; password: string }) {
+    const user = await cloudSessionUser();
+    if (!user) fail("Inicia sesión para continuar");
+    if (body.password.length < 8) fail("La contraseña debe tener al menos 8 caracteres");
+    const { data } = await getSupabase().from("team_users").select("*").eq("id", user.id).maybeSingle();
+    const row = data as TeamUserRow | null;
+    if (!row) fail("Usuario no encontrado");
+    if (!(await verifyPassword(body.currentPassword, row.password_salt, row.password_hash))) {
+      fail("La contraseña actual no es correcta");
+    }
+    const hashed = await hashPassword(body.password);
+    const { error } = await getSupabase()
+      .from("team_users")
+      .update({
+        password_salt: hashed.salt,
+        password_hash: hashed.hash,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", user.id);
     if (error) throw new Error(error.message);
     return { ok: true };
   },
