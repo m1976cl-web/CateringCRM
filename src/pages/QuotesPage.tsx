@@ -18,6 +18,7 @@ import { estimateFoodCost } from "../../shared/shopping";
 import { matchesQuery } from "../search";
 import { loadCompanySettings, quoteTaxBreakdown } from "../settings";
 import { nextQuoteNumber } from "../quotes";
+import { quoteBalance } from "../../shared/quoteLifecycle";
 import { whatsappPhoneUrl, whatsappTextUrl } from "../whatsapp";
 import {
   QUOTE_STATUSES,
@@ -40,6 +41,8 @@ function whatsappQuoteUrl(q: {
   iva: number;
   ivaRate: number;
   grandTotal: number;
+  deposit: number;
+  balance: number;
   items: QuoteItem[];
 }): string {
   const lines = [
@@ -54,6 +57,9 @@ function whatsappQuoteUrl(q: {
     `Neto: ${formatMoney(q.total)}`,
     ...(q.iva > 0 ? [`IVA ${q.ivaRate}%: ${formatMoney(q.iva)}`] : []),
     `Total: ${formatMoney(q.grandTotal)}`,
+    ...(q.deposit > 0
+      ? [`Anticipo: ${formatMoney(q.deposit)}`, `Saldo: ${formatMoney(q.balance)}`]
+      : []),
   ];
   const text = lines.join("\n");
   return whatsappPhoneUrl(q.clientPhone ?? "", text) ?? whatsappTextUrl(text);
@@ -69,6 +75,8 @@ export function QuotesPage() {
   const [quoteDate, setQuoteDate] = useState(toDatetimeLocal(new Date()));
   const [status, setStatus] = useState<QuoteStatus>("borrador");
   const [notes, setNotes] = useState("");
+  const [deposit, setDeposit] = useState("");
+  const [saveMsg, setSaveMsg] = useState("");
   const [items, setItems] = useState<QuoteItem[]>([blankItem()]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -80,6 +88,10 @@ export function QuotesPage() {
 
   const total = useMemo(() => quoteTotal(items), [items]);
   const tax = useMemo(() => quoteTaxBreakdown(total, settings), [total, settings]);
+  const money = useMemo(
+    () => quoteBalance(tax.total, Number(deposit) || 0),
+    [tax.total, deposit],
+  );
   const visibleQuotes = useMemo(
     () =>
       quotes.filter((q) =>
@@ -131,6 +143,7 @@ export function QuotesPage() {
     setQuoteDate(toDatetimeLocal(new Date()));
     setStatus("borrador");
     setNotes("");
+    setDeposit("");
     setItems([blankItem()]);
   }
 
@@ -141,6 +154,7 @@ export function QuotesPage() {
     setQuoteDate(toDatetimeLocal(q.quoteDate));
     setStatus(q.status);
     setNotes(q.notes ?? "");
+    setDeposit(q.depositAmount ? String(q.depositAmount) : "");
     setItems(q.items.length ? q.items : [blankItem()]);
   }
 
@@ -151,6 +165,7 @@ export function QuotesPage() {
     setQuoteDate(toDatetimeLocal(new Date()));
     setStatus("borrador");
     setNotes(q.notes ?? "");
+    setDeposit(q.depositAmount ? String(q.depositAmount) : "");
     setItems(q.items.length ? q.items.map((i) => ({ ...i })) : [blankItem()]);
   }
 
@@ -224,11 +239,19 @@ export function QuotesPage() {
         items: items.filter((i) => i.description.trim() && i.quantity > 0),
         notes: notes || null,
         status,
+        depositAmount: Number(deposit) || 0,
       };
       if (editingId) await api.updateQuote(editingId, payload);
       else await api.createQuote(payload);
       const q = await load();
       reset(q);
+      setSaveMsg(
+        status === "aceptada"
+          ? "Guardada. El evento pasó a Confirmado."
+          : status === "enviada"
+            ? "Guardada. Si el evento estaba en borrador, ahora está Cotizado."
+            : "Cotización guardada.",
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo guardar");
     } finally {
@@ -257,6 +280,7 @@ export function QuotesPage() {
         subtitle="Arma la propuesta desde el evento, imprímela o compártela por WhatsApp."
       />
       {error ? <div className="error-box">{error}</div> : null}
+      {saveMsg ? <p className="meta">{saveMsg}</p> : null}
 
       <div className="split">
         <form className="panel form-grid" onSubmit={onSubmit}>
@@ -291,7 +315,16 @@ export function QuotesPage() {
                 onChange={(e) => setQuoteDate(e.target.value)}
               />
             </FormField>
-            <FormField label="Estado">
+            <FormField
+              label="Estado"
+              hint={
+                status === "aceptada"
+                  ? "Al guardar, el evento queda Confirmado."
+                  : status === "enviada"
+                    ? "Al guardar, un evento en borrador pasa a Cotizado."
+                    : undefined
+              }
+            >
               <select value={status} onChange={(e) => setStatus(e.target.value as QuoteStatus)}>
                 {QUOTE_STATUSES.map((s) => (
                   <option key={s} value={s}>
@@ -373,8 +406,46 @@ export function QuotesPage() {
               ) : (
                 <strong className="grand">Total: {formatMoney(tax.total)}</strong>
               )}
+              {money.deposit > 0 ? (
+                <>
+                  <span className="meta">Anticipo: {formatMoney(money.deposit)}</span>
+                  <strong>Saldo: {formatMoney(money.balance)}</strong>
+                </>
+              ) : null}
             </div>
           </div>
+
+          <FormField
+            label="Anticipo (CLP)"
+            hint="Lo que el cliente paga al aceptar. El saldo queda para el día del evento."
+          >
+            <div className="inline-row">
+              <input
+                type="number"
+                min={0}
+                step="1"
+                value={deposit}
+                onChange={(e) => setDeposit(e.target.value)}
+                placeholder="0"
+              />
+              <button
+                type="button"
+                className="btn"
+                disabled={tax.total <= 0}
+                onClick={() => setDeposit(String(Math.round(tax.total * 0.3)))}
+              >
+                30%
+              </button>
+              <button
+                type="button"
+                className="btn"
+                disabled={tax.total <= 0}
+                onClick={() => setDeposit(String(Math.round(tax.total * 0.5)))}
+              >
+                50%
+              </button>
+            </div>
+          </FormField>
 
           <FormField label="Notas">
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} />
@@ -407,6 +478,7 @@ export function QuotesPage() {
             <div className="list" style={{ marginTop: 12 }}>
               {visibleQuotes.map((q) => {
                 const rowTax = quoteTaxBreakdown(q.total, settings);
+                const rowMoney = quoteBalance(rowTax.total, q.depositAmount ?? 0);
                 return (
                 <div key={q.id} className="list-item">
                   <div>
@@ -416,6 +488,9 @@ export function QuotesPage() {
                     <div className="meta">
                       {q.clientName} · {q.eventTitle} · {formatDate(q.quoteDate)}
                       {rowTax.addIva ? ` · IVA ${rowTax.ivaRate}% incluido` : ""}
+                      {rowMoney.deposit > 0
+                        ? ` · anticipo ${formatMoney(rowMoney.deposit)} · saldo ${formatMoney(rowMoney.balance)}`
+                        : ""}
                     </div>
                   </div>
                   <div className="page-actions">
@@ -427,6 +502,8 @@ export function QuotesPage() {
                         iva: rowTax.iva,
                         ivaRate: rowTax.ivaRate,
                         grandTotal: rowTax.total,
+                        deposit: rowMoney.deposit,
+                        balance: rowMoney.balance,
                       })}
                       target="_blank"
                       rel="noreferrer"

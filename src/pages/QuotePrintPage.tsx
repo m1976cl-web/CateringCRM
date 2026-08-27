@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, formatDate, formatMoney, type QuoteDetail } from "../api";
 import { loadCompanySettings, quoteTaxBreakdown } from "../settings";
+import { quoteBalance } from "../../shared/quoteLifecycle";
 import { QUOTE_STATUS_LABELS } from "../../shared/types";
 
 export function QuotePrintPage() {
@@ -31,6 +32,7 @@ export function QuotePrintPage() {
   const validUntil = new Date(quote.quoteDate);
   validUntil.setDate(validUntil.getDate() + (settings.quoteValidityDays || 15));
   const tax = quoteTaxBreakdown(quote.total, settings);
+  const money = quoteBalance(tax.total, quote.depositAmount ?? 0);
 
   return (
     <div className="print-page">
@@ -108,11 +110,29 @@ export function QuotePrintPage() {
           <p style={{ textAlign: "right", fontSize: "1.25rem", margin: 0 }}>
             <strong>Total: {formatMoney(tax.total)}</strong>
           </p>
+          {money.deposit > 0 ? (
+            <>
+              <span>Anticipo: {formatMoney(money.deposit)}</span>
+              <p style={{ textAlign: "right", fontSize: "1.1rem", margin: 0 }}>
+                <strong>Saldo: {formatMoney(money.balance)}</strong>
+              </p>
+            </>
+          ) : null}
         </div>
       ) : (
-        <p style={{ textAlign: "right", fontSize: "1.25rem", marginTop: 16 }}>
-          <strong>Total: {formatMoney(quote.total)}</strong>
-        </p>
+        <div className="quote-totals">
+          <p style={{ textAlign: "right", fontSize: "1.25rem", margin: 0 }}>
+            <strong>Total: {formatMoney(quote.total)}</strong>
+          </p>
+          {money.deposit > 0 ? (
+            <>
+              <span>Anticipo: {formatMoney(money.deposit)}</span>
+              <p style={{ textAlign: "right", fontSize: "1.1rem", margin: 0 }}>
+                <strong>Saldo: {formatMoney(money.balance)}</strong>
+              </p>
+            </>
+          ) : null}
+        </div>
       )}
 
       {quote.notes ? (
