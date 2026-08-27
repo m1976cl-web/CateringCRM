@@ -1,4 +1,4 @@
-import { buildShoppingLines, roundQty } from "../shared/shopping";
+import { applyPurchaseToStock, buildShoppingLines, quantityAfterStock } from "../shared/shopping";
 import {
   quoteTotal,
   type ClientInput,
@@ -167,6 +167,7 @@ function quoteSummary(store: Store, q: Store["quotes"][number]): QuoteSummary {
     status: q.status,
     eventTitle: ev?.title ?? "—",
     clientName: client?.name ?? "—",
+    clientPhone: client?.phone ?? null,
     createdAt: q.createdAt,
   };
 }
@@ -582,8 +583,12 @@ export const local = {
     const lines = buildShoppingLines(recipesForShopping)
       .map((l) => {
         const cat = store.ingredients.find((i) => i.id === l.ingredientId);
-        const stock = cat?.stockQty ?? 0;
-        const needed = roundQty(Math.max(0, l.quantity - stock));
+        const needed = quantityAfterStock(
+          l.quantity,
+          l.unit,
+          cat?.stockQty ?? 0,
+          cat?.unit ?? l.unit,
+        );
         return { ...l, quantity: needed };
       })
       .filter((l) => l.quantity > 0);
@@ -622,6 +627,26 @@ export const local = {
     const list = store.shoppingLists[idx];
     if (body.items) {
       for (const patch of body.items) {
+        const current = list.items.find((i) => i.id === patch.id);
+        if (!current) continue;
+        if (current.purchased !== patch.purchased) {
+          const ingIdx = store.ingredients.findIndex((ing) => ing.id === current.ingredientId);
+          if (ingIdx >= 0) {
+            const ing = store.ingredients[ingIdx];
+            store.ingredients[ingIdx] = {
+              ...ing,
+              stockQty: applyPurchaseToStock(
+                ing.stockQty ?? 0,
+                ing.unit,
+                current.quantity,
+                current.unit,
+                current.purchased,
+                patch.purchased,
+              ),
+              updatedAt: nowIso(),
+            };
+          }
+        }
         list.items = list.items.map((i) =>
           i.id === patch.id ? { ...i, purchased: patch.purchased } : i,
         );

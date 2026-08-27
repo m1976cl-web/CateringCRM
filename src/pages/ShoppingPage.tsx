@@ -1,12 +1,50 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api, formatDate, formatMoney, type EventSummary, type ShoppingList } from "../api";
+import {
+  api,
+  formatDate,
+  formatMoney,
+  type EventSummary,
+  type ShoppingList,
+  type Supplier,
+} from "../api";
 import { EmptyState, PageHeader } from "../components/EmptyState";
 import { SERVICE_TYPE_LABELS } from "../../shared/types";
+import { whatsappPhoneUrl, whatsappTextUrl } from "../whatsapp";
+
+function shoppingText(
+  title: string,
+  items: ShoppingList["items"],
+  supplierName?: string,
+): string {
+  return [
+    "Lista de compras",
+    title,
+    supplierName && supplierName !== "Sin proveedor" ? `Proveedor: ${supplierName}` : "",
+    "",
+    ...items.map(
+      (i) => `${i.purchased ? "☑" : "☐"} ${i.quantity} ${i.unit} ${i.name}`,
+    ),
+  ]
+    .filter((line) => line !== "")
+    .join("\n");
+}
+
+function supplierWhatsApp(
+  suppliers: Supplier[],
+  supplierId: number | null,
+  text: string,
+): string {
+  const phone = supplierId
+    ? suppliers.find((s) => s.id === supplierId)?.phone
+    : undefined;
+  return (phone ? whatsappPhoneUrl(phone, text) : null) ?? whatsappTextUrl(text);
+}
 
 export function ShoppingPage() {
   const { eventId: eventIdParam } = useParams();
   const [events, setEvents] = useState<EventSummary[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [selectedId, setSelectedId] = useState(eventIdParam ?? "");
   const [list, setList] = useState<ShoppingList | null>(null);
   const [menuCount, setMenuCount] = useState(0);
@@ -19,9 +57,10 @@ export function ShoppingPage() {
     let alive = true;
     (async () => {
       try {
-        const rows = await api.listEvents();
+        const [rows, supplierRows] = await Promise.all([api.listEvents(), api.listSuppliers()]);
         if (!alive) return;
         setEvents(rows);
+        setSuppliers(supplierRows);
         if (!selectedId && rows[0]) setSelectedId(String(rows[0].id));
       } catch (e) {
         if (alive) setError(e instanceof Error ? e.message : "Error al cargar eventos");
@@ -76,14 +115,18 @@ export function ShoppingPage() {
   }, [selectedId]);
 
   const grouped = useMemo(() => {
-    const map = new Map<string, ShoppingList["items"]>();
+    const map = new Map<
+      string,
+      { name: string; supplierId: number | null; items: ShoppingList["items"] }
+    >();
     for (const item of list?.items ?? []) {
-      const key = item.supplierName ?? "Sin proveedor";
-      const arr = map.get(key) ?? [];
-      arr.push(item);
-      map.set(key, arr);
+      const key = item.supplierId != null ? String(item.supplierId) : "none";
+      const name = item.supplierName ?? "Sin proveedor";
+      const arr = map.get(key);
+      if (arr) arr.items.push(item);
+      else map.set(key, { name, supplierId: item.supplierId, items: [item] });
     }
-    return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0], "es"));
+    return [...map.values()].sort((a, b) => a.name.localeCompare(b.name, "es"));
   }, [list]);
 
   const remaining = list?.items.filter((i) => !i.purchased).length ?? 0;
@@ -168,23 +211,13 @@ export function ShoppingPage() {
                 </button>
                 <a
                   className="btn"
-                  href={`https://wa.me/?text=${encodeURIComponent(
-                    [
-                      "Lista de compras",
-                      selectedEvent ? selectedEvent.title : "",
-                      "",
-                      ...list.items.map(
-                        (i) =>
-                          `${i.purchased ? "☑" : "☐"} ${i.quantity} ${i.unit} ${i.name}`,
-                      ),
-                    ]
-                      .filter(Boolean)
-                      .join("\n"),
-                  )}`}
+                  href={whatsappTextUrl(
+                    shoppingText(selectedEvent?.title ?? "", list.items),
+                  )}
                   target="_blank"
                   rel="noreferrer"
                 >
-                  WhatsApp
+                  WhatsApp lista
                 </a>
               </>
             ) : null}
@@ -263,10 +296,22 @@ export function ShoppingPage() {
               {estimate > 0 ? ` · estimado ${formatMoney(estimate)}` : ""} · generada{" "}
               {formatDate(list.generatedAt)}
             </p>
-            {grouped.map(([supplier, items]) => (
-              <section key={supplier} className="panel">
-                <h2>{supplier}</h2>
-                {items.map((item) => (
+            {grouped.map((group) => {
+              const text = shoppingText(
+                selectedEvent?.title ?? "",
+                group.items,
+                group.name,
+              );
+              const wa = supplierWhatsApp(suppliers, group.supplierId, text);
+              return (
+              <section key={group.supplierId ?? "none"} className="panel">
+                <div className="page-header" style={{ marginBottom: 8 }}>
+                  <h2 style={{ margin: 0 }}>{group.name}</h2>
+                  <a className="btn" href={wa} target="_blank" rel="noreferrer">
+                    WhatsApp
+                  </a>
+                </div>
+                {group.items.map((item) => (
                   <label
                     key={item.id}
                     className={`check-row ${item.purchased ? "done" : ""}`}
@@ -291,7 +336,8 @@ export function ShoppingPage() {
                   </label>
                 ))}
               </section>
-            ))}
+              );
+            })}
             <p className="meta">
               <Link to={`/eventos/${selectedId}`}>← Volver al evento</Link>
               {" · "}

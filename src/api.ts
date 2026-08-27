@@ -120,6 +120,7 @@ export type QuoteSummary = {
   status: QuoteStatus;
   eventTitle: string;
   clientName: string;
+  clientPhone: string | null;
   createdAt: string;
 };
 
@@ -128,7 +129,6 @@ export type QuoteDetail = QuoteSummary & {
   attendees: number;
   location: string | null;
   clientEmail: string | null;
-  clientPhone: string | null;
   clientCompany: string | null;
   updatedAt: string;
 };
