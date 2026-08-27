@@ -3,8 +3,12 @@ import { asc } from "drizzle-orm";
 import { db } from "../../db";
 import { suppliers } from "../../db/schema";
 import { asOptionalString, error, json, now, readJson } from "./_shared/http";
+import { denyIfUnauthorized } from "./_shared/auth";
 
 export default async (req: Request, _context: Context) => {
+  const denied = await denyIfUnauthorized(req);
+  if (denied) return denied;
+
   if (req.method === "GET") {
     const rows = await db.select().from(suppliers).orderBy(asc(suppliers.name));
     return json(rows);

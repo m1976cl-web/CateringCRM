@@ -3,10 +3,11 @@ import { eq } from "drizzle-orm";
 import { db } from "../../db";
 import { clients, events, quotes } from "../../db/schema";
 import { isQuoteStatus, quoteTotal } from "../../shared/types";
-import { normalizeDeposit } from "../../shared/quoteLifecycle";
+import { denyIfUnauthorized } from "./_shared/auth";
 import { asNumber, asOptionalString, error, json, now, parseId, readJson } from "./_shared/http";
 import { parseItems } from "./_shared/quotes";
 import { syncEventFromQuote } from "./_shared/quoteLifecycle";
+import { paymentsForQuote, replaceQuotePayments } from "./_shared/quotePayments";
 
 async function quoteDetail(id: number) {
   const [row] = await db
@@ -20,6 +21,7 @@ async function quoteDetail(id: number) {
       notes: quotes.notes,
       status: quotes.status,
       depositAmount: quotes.depositAmount,
+      foodCost: quotes.foodCost,
       createdAt: quotes.createdAt,
       updatedAt: quotes.updatedAt,
       eventTitle: events.title,
@@ -36,10 +38,15 @@ async function quoteDetail(id: number) {
     .innerJoin(clients, eq(events.clientId, clients.id))
     .where(eq(quotes.id, id))
     .limit(1);
-  return row ?? null;
+  if (!row) return null;
+  const payments = await paymentsForQuote(id);
+  return { ...row, foodCost: row.foodCost ?? 0, payments };
 }
 
 export default async (req: Request, context: Context) => {
+  const denied = await denyIfUnauthorized(req);
+  if (denied) return denied;
+
   const id = parseId(context.params?.id);
   if (!id) return error("ID inválido", 400);
 
@@ -71,13 +78,14 @@ export default async (req: Request, context: Context) => {
         total: quoteTotal(items),
         notes: asOptionalString(body.notes),
         status: body.status,
-        depositAmount: normalizeDeposit(body.depositAmount),
+        foodCost: Math.max(0, asNumber(body.foodCost, 0)),
         updatedAt: now(),
       })
       .where(eq(quotes.id, id))
       .returning();
 
     if (!updated) return error("Cotización no encontrada", 404);
+    await replaceQuotePayments(id, body);
     await syncEventFromQuote(eventId, body.status);
     return json(await quoteDetail(id));
   }

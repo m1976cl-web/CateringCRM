@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, formatDate, type EventSummary } from "../api";
+import { api, formatDate, formatMoney, type EventSummary, type QuoteSummary } from "../api";
 import { EmptyState, PageHeader } from "../components/EmptyState";
 import { SearchBar } from "../components/SearchBar";
 import { StatusBadge } from "../components/StatusBadge";
 import { matchesQuery } from "../search";
+import { clientMoneyFromQuotes } from "../quoteDisplay";
 import {
   EVENT_STATUSES,
   EVENT_STATUS_LABELS,
@@ -14,6 +15,7 @@ import {
 
 export function EventsPage() {
   const [rows, setRows] = useState<EventSummary[]>([]);
+  const [quotes, setQuotes] = useState<QuoteSummary[]>([]);
   const [filter, setFilter] = useState<EventStatus | "todos">("todos");
   const [query, setQuery] = useState("");
   const [error, setError] = useState("");
@@ -23,8 +25,11 @@ export function EventsPage() {
     let alive = true;
     (async () => {
       try {
-        const data = await api.listEvents();
-        if (alive) setRows(data);
+        const [data, qs] = await Promise.all([api.listEvents(), api.listQuotes()]);
+        if (alive) {
+          setRows(data);
+          setQuotes(qs);
+        }
       } catch (e) {
         if (alive) setError(e instanceof Error ? e.message : "Error al cargar eventos");
       } finally {
@@ -97,12 +102,17 @@ export function EventsPage() {
         />
       ) : (
         <div className="list">
-          {filtered.map((ev) => (
+          {filtered.map((ev) => {
+            const money = clientMoneyFromQuotes(quotes.filter((q) => q.eventId === ev.id));
+            return (
             <Link key={ev.id} to={`/eventos/${ev.id}`} className="list-item">
               <div>
                 <h3>{ev.title}</h3>
                 <div className="meta">
                   {ev.clientName} · {formatDate(ev.eventDate)} · {ev.attendees} personas
+                  {money.billed > 0
+                    ? ` · saldo ${formatMoney(money.balance)}`
+                    : ""}
                 </div>
                 <div className="meta">
                   {ev.services.map((s) => SERVICE_TYPE_LABELS[s]).join(" · ")}
@@ -110,7 +120,8 @@ export function EventsPage() {
               </div>
               <StatusBadge status={ev.status} />
             </Link>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

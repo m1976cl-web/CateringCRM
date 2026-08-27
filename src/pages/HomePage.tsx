@@ -13,8 +13,7 @@ import {
 } from "../api";
 import { PageHeader } from "../components/EmptyState";
 import { QuoteBadge, StatusBadge } from "../components/StatusBadge";
-import { quoteTaxBreakdown } from "../settings";
-import { quoteBalance } from "../../shared/quoteLifecycle";
+import { clientMoneyFromQuotes, quoteMoney } from "../quoteDisplay";
 
 export function HomePage() {
   const [data, setData] = useState<Dashboard | null>(null);
@@ -139,17 +138,21 @@ export function HomePage() {
         <section className="panel" style={{ marginBottom: 16 }}>
           <h2>Hoy</h2>
           <div className="list" style={{ marginTop: 12 }}>
-            {todayEvents.map((ev) => (
+            {todayEvents.map((ev) => {
+              const money = clientMoneyFromQuotes(quotes.filter((q) => q.eventId === ev.id));
+              return (
               <Link key={ev.id} to={`/eventos/${ev.id}`} className="list-item">
                 <div>
                   <h3>{ev.title}</h3>
                   <div className="meta">
                     {ev.clientName} · {formatDate(ev.eventDate)} · {ev.attendees} personas
+                    {money.billed > 0 ? ` · saldo ${formatMoney(money.balance)}` : ""}
                   </div>
                 </div>
                 <StatusBadge status={ev.status} />
               </Link>
-            ))}
+              );
+            })}
           </div>
         </section>
       ) : null}
@@ -200,13 +203,12 @@ export function HomePage() {
           {pendingQuotes.length ? (
             <div className="list" style={{ marginTop: 12 }}>
               {pendingQuotes.slice(0, 5).map((q) => {
-                const tax = quoteTaxBreakdown(q.total);
-                const money = quoteBalance(tax.total, q.depositAmount ?? 0);
+                const money = quoteMoney(q);
                 return (
                   <Link key={q.id} to="/cotizaciones" className="list-item">
                     <div>
                       <h3>
-                        {q.quoteNumber || `Cotización #${q.id}`} — {formatMoney(tax.total)}
+                        {q.quoteNumber || `Cotización #${q.id}`} — {formatMoney(money.total)}
                       </h3>
                       <div className="meta">
                         {q.clientName} · {q.eventTitle}

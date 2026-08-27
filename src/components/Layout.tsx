@@ -1,6 +1,7 @@
 import { NavLink, useLocation } from "react-router-dom";
 import { useEffect, useState, type ReactNode } from "react";
 import { getDataMode, getDataModeLabel } from "../api";
+import { useAuth } from "./AuthGate";
 import { onOfflineFallback, resetOfflineFallbackFlag } from "../offlineBanner";
 import { InstallButton } from "./InstallButton";
 
@@ -31,6 +32,7 @@ export function Layout({ children }: { children: ReactNode }) {
   const [offlineBanner, setOfflineBanner] = useState(false);
   const location = useLocation();
   const mode = getDataMode();
+  const { user, logout } = useAuth();
 
   useEffect(() => {
     setMenuOpen(false);
@@ -68,7 +70,13 @@ export function Layout({ children }: { children: ReactNode }) {
             >
               {getDataModeLabel(mode)}
             </span>
+            <span className="meta" title={user.email}>
+              {user.name}
+            </span>
             <InstallButton />
+            <button type="button" className="btn ghost" onClick={() => void logout()}>
+              Salir
+            </button>
             <button
               type="button"
               className="nav-toggle"

@@ -3,9 +3,13 @@ import { desc, eq } from "drizzle-orm";
 import { db } from "../../db";
 import { clients, eventServices, events } from "../../db/schema";
 import { error, json, now, readJson } from "./_shared/http";
+import { denyIfUnauthorized } from "./_shared/auth";
 import { eventDetail, parseEventBody, saveEventRelations } from "./_shared/events";
 
 export default async (req: Request, _context: Context) => {
+  const denied = await denyIfUnauthorized(req);
+  if (denied) return denied;
+
   if (req.method === "GET") {
     const rows = await db
       .select({

@@ -3,12 +3,17 @@ import { desc, eq } from "drizzle-orm";
 import { db } from "../../db";
 import { clients, events, quotes } from "../../db/schema";
 import { isQuoteStatus, quoteTotal } from "../../shared/types";
-import { normalizeDeposit } from "../../shared/quoteLifecycle";
+import { denyIfUnauthorized } from "./_shared/auth";
 import { asNumber, asOptionalString, error, json, now, readJson } from "./_shared/http";
 import { parseItems } from "./_shared/quotes";
 import { syncEventFromQuote } from "./_shared/quoteLifecycle";
+import { paymentsByQuoteIds, replaceQuotePayments } from "./_shared/quotePayments";
+import { sumPayments } from "../../shared/quoteLifecycle";
 
 export default async (req: Request, _context: Context) => {
+  const denied = await denyIfUnauthorized(req);
+  if (denied) return denied;
+
   if (req.method === "GET") {
     const rows = await db
       .select({
@@ -21,6 +26,7 @@ export default async (req: Request, _context: Context) => {
         notes: quotes.notes,
         status: quotes.status,
         depositAmount: quotes.depositAmount,
+        foodCost: quotes.foodCost,
         createdAt: quotes.createdAt,
         eventTitle: events.title,
         clientName: clients.name,
@@ -30,7 +36,14 @@ export default async (req: Request, _context: Context) => {
       .innerJoin(events, eq(quotes.eventId, events.id))
       .innerJoin(clients, eq(events.clientId, clients.id))
       .orderBy(desc(quotes.quoteDate));
-    return json(rows);
+    const pays = await paymentsByQuoteIds(rows.map((r) => r.id));
+    return json(
+      rows.map((row) => ({
+        ...row,
+        foodCost: row.foodCost ?? 0,
+        payments: pays.get(row.id) ?? [],
+      })),
+    );
   }
 
   const body = await readJson(req);
@@ -54,15 +67,18 @@ export default async (req: Request, _context: Context) => {
       total: quoteTotal(items),
       notes: asOptionalString(body.notes),
       status: body.status,
-      depositAmount: normalizeDeposit(body.depositAmount),
+      depositAmount: 0,
+      foodCost: Math.max(0, asNumber(body.foodCost, 0)),
       createdAt: now(),
       updatedAt: now(),
     })
     .returning();
 
+  await replaceQuotePayments(created.id, body);
   await syncEventFromQuote(eventId, body.status);
-
-  return json(created, 201);
+  const pays = await paymentsByQuoteIds([created.id]);
+  const payments = pays.get(created.id) ?? [];
+  return json({ ...created, depositAmount: sumPayments(payments), payments }, 201);
 };
 
 export const config: Config = {

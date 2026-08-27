@@ -1,6 +1,6 @@
 import { NavLink, Route, Routes } from "react-router-dom";
 import { Layout } from "./components/Layout";
-import { PinGate } from "./components/PinGate";
+import { AuthGate } from "./components/AuthGate";
 import { HomePage } from "./pages/HomePage";
 import { ClientsPage } from "./pages/ClientsPage";
 import { EventsPage } from "./pages/EventsPage";
@@ -17,7 +17,7 @@ import { ProductionPage } from "./pages/ProductionPage";
 
 export default function App() {
   return (
-    <PinGate>
+    <AuthGate>
       <Routes>
         <Route path="/cotizaciones/:id/imprimir" element={<QuotePrintPage />} />
         <Route path="/eventos/:id/produccion" element={<ProductionPage />} />
@@ -45,7 +45,7 @@ export default function App() {
           }
         />
       </Routes>
-    </PinGate>
+    </AuthGate>
   );
 }
 

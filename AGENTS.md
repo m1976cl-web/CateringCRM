@@ -4,7 +4,7 @@ Instrucciones operativas para agentes de código. Prioriza siempre las instrucci
 
 ## Qué es este proyecto
 
-CRM operativo para catering (clientes, eventos, recetas, compras, proveedores, cotizaciones). UI en español, sin login en v1.
+CRM operativo para catering (clientes, eventos, recetas, compras, proveedores, cotizaciones). UI en español. Login de equipo (email + contraseña); las Functions de Netlify exigen sesión una vez creado el primer usuario.
 
 ## Stack
 
