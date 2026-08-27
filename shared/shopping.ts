@@ -115,6 +115,10 @@ export function buildShoppingLinesNormalized(recipes: RecipeForShopping[]): Shop
       const scaled = ing.quantity * scale;
       const canon = toCanonical(scaled, ing.unit);
       const key = `${ing.ingredientId}:${canon.unit}`;
+      let unitPrice = ing.unitPrice;
+      if (unitPrice != null && ing.unit !== canon.unit) {
+        if (ing.unit === "kg" || ing.unit === "L") unitPrice = unitPrice / 1000;
+      }
       const existing = map.get(key);
       if (existing) {
         existing.quantity += canon.quantity;
@@ -126,7 +130,7 @@ export function buildShoppingLinesNormalized(recipes: RecipeForShopping[]): Shop
           quantity: canon.quantity,
           supplierId: ing.supplierId,
           supplierName: ing.supplierName,
-          unitPrice: ing.unitPrice,
+          unitPrice,
         });
       }
     }
