@@ -19,7 +19,7 @@ import { matchesQuery } from "../search";
 import { loadCompanySettings, quoteTaxBreakdown } from "../settings";
 import { nextQuoteNumber } from "../quotes";
 import { quoteBalance } from "../../shared/quoteLifecycle";
-import { whatsappTextUrl } from "../whatsapp";
+import { whatsappPhoneUrl, whatsappTextUrl } from "../whatsapp";
 import {
   QUOTE_STATUSES,
   QUOTE_STATUS_LABELS,
@@ -35,6 +35,7 @@ function whatsappQuoteUrl(q: {
   quoteNumber: string | null;
   id: number;
   clientName: string;
+  clientPhone?: string | null;
   eventTitle: string;
   total: number;
   iva: number;
@@ -60,7 +61,8 @@ function whatsappQuoteUrl(q: {
       ? [`Anticipo: ${formatMoney(q.deposit)}`, `Saldo: ${formatMoney(q.balance)}`]
       : []),
   ];
-  return whatsappTextUrl(lines.join("\n"));
+  const text = lines.join("\n");
+  return whatsappPhoneUrl(q.clientPhone ?? "", text) ?? whatsappTextUrl(text);
 }
 
 export function QuotesPage() {
@@ -197,30 +199,18 @@ export function QuotesPage() {
   }
 
   function applyEventFill(ev: EventDetail, sale: number, foodCost: number) {
-    const serviceLines = ev.services.map((s) => ({
-      description: `Servicio: ${SERVICE_TYPE_LABELS[s]}`,
-      quantity: ev.attendees,
-      unitPrice: 0,
-    }));
     setItems([
       {
         description: `Servicio de catering — ${ev.title} (${ev.attendees} personas)`,
         quantity: 1,
         unitPrice: Math.round(sale),
       },
-      ...serviceLines,
-      ...(foodCost > 0
-        ? [
-            {
-              description: `Referencia costo ingredientes (no cobrado)`,
-              quantity: 1,
-              unitPrice: 0,
-            },
-          ]
-        : []),
     ]);
     setNotes(
       [
+        ev.services.length
+          ? `Servicios: ${ev.services.map((s) => SERVICE_TYPE_LABELS[s]).join(", ")}`
+          : null,
         ev.dietaryRestrictions ? `Restricciones: ${ev.dietaryRestrictions}` : null,
         foodCost > 0 ? `Costo ingredientes estimado: ${formatMoney(foodCost)}` : null,
       ]

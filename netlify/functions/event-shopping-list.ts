@@ -10,7 +10,8 @@ import {
   shoppingLists,
   suppliers,
 } from "../../db/schema";
-import { buildShoppingLines, roundQty } from "../../shared/shopping";
+import { applyPurchaseToStock, buildShoppingLines, quantityAfterStock } from "../../shared/shopping";
+import type { IngredientUnit } from "../../shared/types";
 import { error, json, now, parseId, readJson } from "./_shared/http";
 
 async function loadShoppingList(eventId: number) {
@@ -53,6 +54,7 @@ async function regenerate(eventId: number) {
     .innerJoin(recipes, eq(eventRecipes.recipeId, recipes.id))
     .where(eq(eventRecipes.eventId, eventId));
 
+  const stockById = new Map<number, { qty: number; unit: IngredientUnit }>();
   const recipesForShopping = await Promise.all(
     menu.map(async (m) => {
       const ings = await db
@@ -71,6 +73,12 @@ async function regenerate(eventId: number) {
         .leftJoin(suppliers, eq(ingredients.supplierId, suppliers.id))
         .where(eq(recipeIngredients.recipeId, m.recipeId));
 
+      for (const ing of ings) {
+        if (!stockById.has(ing.ingredientId)) {
+          stockById.set(ing.ingredientId, { qty: ing.stockQty ?? 0, unit: ing.unit });
+        }
+      }
+
       return {
         yieldPortions: m.yieldPortions,
         portions: m.portions,
@@ -79,24 +87,18 @@ async function regenerate(eventId: number) {
     }),
   );
 
-  const stockById = new Map<number, number>();
-  for (const m of recipesForShopping) {
-    for (const ing of m.ingredients) {
-      if (!stockById.has(ing.ingredientId)) {
-        const [row] = await db
-          .select({ stockQty: ingredients.stockQty })
-          .from(ingredients)
-          .where(eq(ingredients.id, ing.ingredientId))
-          .limit(1);
-        stockById.set(ing.ingredientId, row?.stockQty ?? 0);
-      }
-    }
-  }
-
   const lines = buildShoppingLines(recipesForShopping)
     .map((l) => {
-      const stock = stockById.get(l.ingredientId) ?? 0;
-      return { ...l, quantity: roundQty(Math.max(0, l.quantity - stock)) };
+      const stock = stockById.get(l.ingredientId);
+      return {
+        ...l,
+        quantity: quantityAfterStock(
+          l.quantity,
+          l.unit,
+          stock?.qty ?? 0,
+          stock?.unit ?? l.unit,
+        ),
+      };
     })
     .filter((l) => l.quantity > 0);
 
@@ -158,9 +160,38 @@ export default async (req: Request, context: Context) => {
       for (const item of body.items) {
         const itemId = Number(item.id);
         if (!Number.isInteger(itemId)) continue;
+        const current = list.items.find((i) => i.id === itemId);
+        const nextPurchased = Boolean(item.purchased);
+        if (current && current.purchased !== nextPurchased) {
+          const [ing] = await db
+            .select({
+              id: ingredients.id,
+              unit: ingredients.unit,
+              stockQty: ingredients.stockQty,
+            })
+            .from(ingredients)
+            .where(eq(ingredients.id, current.ingredientId))
+            .limit(1);
+          if (ing) {
+            await db
+              .update(ingredients)
+              .set({
+                stockQty: applyPurchaseToStock(
+                  ing.stockQty ?? 0,
+                  ing.unit,
+                  current.quantity,
+                  current.unit as IngredientUnit,
+                  current.purchased,
+                  nextPurchased,
+                ),
+                updatedAt: now(),
+              })
+              .where(eq(ingredients.id, ing.id));
+          }
+        }
         await db
           .update(shoppingListItems)
-          .set({ purchased: Boolean(item.purchased) })
+          .set({ purchased: nextPurchased })
           .where(eq(shoppingListItems.id, itemId));
       }
     }
