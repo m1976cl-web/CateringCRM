@@ -12,7 +12,8 @@ Pensado para equipos con poco conocimiento técnico: formularios claros, textos 
 - **Recetas** — rendimiento configurable + ingredientes
 - **Ingredientes y proveedores** — catálogo con precios
 - **Lista de compras** — se genera escalando las recetas del evento por porciones
-- **Cotizaciones** — ítems editables + vista imprimible / PDF del navegador
+- **Cotizaciones** — ítems editables, varios abonos, margen vs. costo de ingredientes, vista imprimible / PDF
+- **Clientes** — ficha con contacto, historial de eventos/cotizaciones y saldo
 
 ## Stack
 
@@ -22,7 +23,9 @@ Pensado para equipos con poco conocimiento técnico: formularios claros, textos 
 - Modo estático (GitHub Pages): sin Supabase → `localStorage` del navegador
 - PWA (`vite-plugin-pwa`): instalable en móvil y escritorio
 
-**Sin autenticación en v1.** Cualquiera con la URL (o con la anon key de Supabase) puede leer y escribir. Usa un sitio privado, restringe el proyecto Supabase, o añade login más adelante.
+**Login de equipo.** La primera visita pide crear un email y contraseña. Después, las Functions de Netlify exigen esa sesión. En modo Supabase o local el login cierra la interfaz; si el proyecto Supabase es público, restringe la anon key.
+
+**Sin autenticación de clientes finales.** El login es para el equipo de catering, no para invitados.
 
 ### Dónde se guardan los datos
 
@@ -84,14 +87,14 @@ Si también usas Supabase, actualiza `supabase/migrations/` para mantener el esq
 Sin Supabase, GitHub Pages guarda todo en el `localStorage` de cada teléfono/PC (no se comparte). Para un CRM de equipo, conecta un proyecto gratis de Supabase:
 
 1. Crea un proyecto en [supabase.com](https://supabase.com) (plan free).
-2. Abre **SQL Editor** → New query → pega y ejecuta [`supabase/migrations/001_init.sql`](./supabase/migrations/001_init.sql).
+2. Abre **SQL Editor** → New query → ejecuta en orden los archivos de [`supabase/migrations/`](./supabase/migrations/) (`001` … `004`).
 3. En **Project Settings → API**, copia **Project URL** y **anon public** key.
 4. En GitHub: **Settings → Secrets and variables → Actions**, crea:
    - `VITE_SUPABASE_URL`
    - `VITE_SUPABASE_ANON_KEY`
 5. Vuelve a desplegar Pages (push a `main` o *Run workflow*). El badge debe decir **Nube (Supabase)**.
 
-**Seguridad (v1):** las políticas RLS del SQL son permisivas (cualquiera con la anon key puede leer/escribir), igual que una URL pública abierta. No subas la **service role** key. Cuando necesites usuarios reales, añade auth + políticas por usuario.
+**Seguridad:** el login de equipo cierra la app. Las políticas RLS de Supabase siguen siendo permisivas (la anon key puede leer/escribir). No subas la **service role** key. En Netlify, las Functions sí exigen sesión después del primer usuario.
 
 Si no configuras esos secrets, Pages sigue en modo estático local.
 

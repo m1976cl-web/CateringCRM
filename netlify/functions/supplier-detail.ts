@@ -3,8 +3,12 @@ import { eq } from "drizzle-orm";
 import { db } from "../../db";
 import { suppliers } from "../../db/schema";
 import { asOptionalString, error, json, now, parseId, readJson } from "./_shared/http";
+import { denyIfUnauthorized } from "./_shared/auth";
 
 export default async (req: Request, context: Context) => {
+  const denied = await denyIfUnauthorized(req);
+  if (denied) return denied;
+
   const id = parseId(context.params?.id);
   if (!id) return error("ID inválido", 400);
 

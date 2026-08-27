@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, formatDate, type Client, type EventSummary } from "../api";
+import { api, formatDate, formatMoney, type Client, type EventSummary, type QuoteSummary } from "../api";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { EmptyState, PageHeader } from "../components/EmptyState";
 import { FormField } from "../components/FormField";
 import { SearchBar } from "../components/SearchBar";
-import { StatusBadge } from "../components/StatusBadge";
+import { QuoteBadge, StatusBadge } from "../components/StatusBadge";
 import { matchesQuery } from "../search";
+import { clientMoneyFromQuotes, quoteMoney } from "../quoteDisplay";
 import { whatsappPhoneUrl } from "../whatsapp";
 
 const blank = { name: "", phone: "", email: "", company: "", notes: "" };
@@ -14,6 +15,7 @@ const blank = { name: "", phone: "", email: "", company: "", notes: "" };
 export function ClientsPage() {
   const [rows, setRows] = useState<Client[]>([]);
   const [events, setEvents] = useState<EventSummary[]>([]);
+  const [quotes, setQuotes] = useState<QuoteSummary[]>([]);
   const [form, setForm] = useState(blank);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [error, setError] = useState("");
@@ -25,9 +27,14 @@ export function ClientsPage() {
   async function load() {
     setLoading(true);
     try {
-      const [clients, evs] = await Promise.all([api.listClients(), api.listEvents()]);
+      const [clients, evs, qs] = await Promise.all([
+        api.listClients(),
+        api.listEvents(),
+        api.listQuotes(),
+      ]);
       setRows(clients);
       setEvents(evs);
+      setQuotes(qs);
       setError("");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error al cargar clientes");
@@ -59,6 +66,12 @@ export function ClientsPage() {
     () => (editingId ? events.filter((e) => e.clientId === editingId) : []),
     [events, editingId],
   );
+  const clientQuotes = useMemo(() => {
+    if (!editingId) return [];
+    const eventIds = new Set(events.filter((e) => e.clientId === editingId).map((e) => e.id));
+    return quotes.filter((q) => eventIds.has(q.eventId));
+  }, [quotes, events, editingId]);
+  const clientMoney = useMemo(() => clientMoneyFromQuotes(clientQuotes), [clientQuotes]);
   const waUrl = whatsappPhoneUrl(form.phone);
 
   function reset() {
@@ -171,22 +184,75 @@ export function ClientsPage() {
               </>
             ) : null}
           </div>
-          {editingId && clientEvents.length > 0 ? (
+          {editingId ? (
             <div>
-              <h3 style={{ marginBottom: 8 }}>Eventos de este cliente</h3>
-              <div className="list">
-                {clientEvents.map((ev) => (
-                  <Link key={ev.id} to={`/eventos/${ev.id}`} className="list-item">
-                    <div>
-                      <h3>{ev.title}</h3>
-                      <div className="meta">
-                        {formatDate(ev.eventDate)} · {ev.attendees} personas
-                      </div>
-                    </div>
-                    <StatusBadge status={ev.status} />
-                  </Link>
-                ))}
+              <h3 style={{ marginBottom: 8 }}>Historial</h3>
+              <div className="stat-grid" style={{ marginBottom: 12 }}>
+                <div className="stat">
+                  <strong>{formatMoney(clientMoney.billed)}</strong>
+                  <span>Facturado</span>
+                </div>
+                <div className="stat">
+                  <strong>{formatMoney(clientMoney.paid)}</strong>
+                  <span>Pagado</span>
+                </div>
+                <div className="stat">
+                  <strong>{formatMoney(clientMoney.balance)}</strong>
+                  <span>Saldo</span>
+                </div>
               </div>
+              {clientEvents.length > 0 ? (
+                <>
+                  <h3 style={{ marginBottom: 8 }}>Eventos</h3>
+                  <div className="list">
+                    {clientEvents.map((ev) => {
+                      const money = clientMoneyFromQuotes(
+                        clientQuotes.filter((q) => q.eventId === ev.id),
+                      );
+                      return (
+                        <Link key={ev.id} to={`/eventos/${ev.id}`} className="list-item">
+                          <div>
+                            <h3>{ev.title}</h3>
+                            <div className="meta">
+                              {formatDate(ev.eventDate)} · {ev.attendees} personas
+                              {money.billed > 0 ? ` · saldo ${formatMoney(money.balance)}` : ""}
+                            </div>
+                          </div>
+                          <StatusBadge status={ev.status} />
+                        </Link>
+                      );
+                    })}
+                  </div>
+                </>
+              ) : (
+                <p className="meta">Aún no hay eventos de este cliente.</p>
+              )}
+              {clientQuotes.length > 0 ? (
+                <>
+                  <h3 style={{ margin: "16px 0 8px" }}>Cotizaciones</h3>
+                  <div className="list">
+                    {clientQuotes.map((q) => {
+                      const money = quoteMoney(q);
+                      return (
+                        <Link key={q.id} to="/cotizaciones" className="list-item">
+                          <div>
+                            <h3>
+                              {q.quoteNumber || `Cotización #${q.id}`} — {formatMoney(money.total)}
+                            </h3>
+                            <div className="meta">
+                              {q.eventTitle}
+                              {money.deposit > 0
+                                ? ` · pagado ${formatMoney(money.deposit)} · saldo ${formatMoney(money.balance)}`
+                                : ""}
+                            </div>
+                          </div>
+                          <QuoteBadge status={q.status} />
+                        </Link>
+                      );
+                    })}
+                  </div>
+                </>
+              ) : null}
             </div>
           ) : null}
         </form>
@@ -209,12 +275,15 @@ export function ClientsPage() {
             <div className="list" style={{ marginTop: 12 }}>
               {visible.map((c) => {
                 const wa = whatsappPhoneUrl(c.phone ?? "");
+                const eventIds = new Set(events.filter((e) => e.clientId === c.id).map((e) => e.id));
+                const money = clientMoneyFromQuotes(quotes.filter((q) => eventIds.has(q.eventId)));
                 return (
                 <div key={c.id} className="list-item">
                   <div>
                     <h3>{c.name}</h3>
                     <div className="meta">
                       {[c.company, c.phone, c.email].filter(Boolean).join(" · ") || "Sin contacto"}
+                      {money.billed > 0 ? ` · saldo ${formatMoney(money.balance)}` : ""}
                     </div>
                   </div>
                   <div className="page-actions">

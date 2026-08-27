@@ -12,6 +12,7 @@ import {
 import type {
   EventStatus,
   IngredientUnit,
+  PaymentMethod,
   QuoteItem,
   QuoteStatus,
   ServiceType,
@@ -123,8 +124,41 @@ export const quotes = pgTable("quotes", {
   notes: text("notes"),
   status: varchar("status", { length: 40 }).$type<QuoteStatus>().notNull().default("borrador"),
   depositAmount: doublePrecision("deposit_amount").notNull().default(0),
+  foodCost: doublePrecision("food_cost").notNull().default(0),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const quotePayments = pgTable("quote_payments", {
+  id: serial().primaryKey(),
+  quoteId: integer("quote_id")
+    .notNull()
+    .references(() => quotes.id, { onDelete: "cascade" }),
+  amount: doublePrecision("amount").notNull(),
+  paidAt: timestamp("paid_at").notNull().defaultNow(),
+  method: varchar("method", { length: 40 }).$type<PaymentMethod>().notNull().default("transferencia"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const teamUsers = pgTable("team_users", {
+  id: serial().primaryKey(),
+  email: varchar("email", { length: 160 }).notNull().unique(),
+  name: varchar("name", { length: 160 }).notNull(),
+  passwordSalt: varchar("password_salt", { length: 64 }).notNull(),
+  passwordHash: varchar("password_hash", { length: 128 }).notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const teamSessions = pgTable("team_sessions", {
+  id: serial().primaryKey(),
+  userId: integer("user_id")
+    .notNull()
+    .references(() => teamUsers.id, { onDelete: "cascade" }),
+  tokenHash: varchar("token_hash", { length: 64 }).notNull().unique(),
+  expiresAt: timestamp("expires_at").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
 export const shoppingLists = pgTable("shopping_lists", {

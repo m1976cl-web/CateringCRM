@@ -56,6 +56,24 @@ export type QuoteItem = {
   unitPrice: number;
 };
 
+export const PAYMENT_METHODS = ["efectivo", "transferencia", "tarjeta", "otro"] as const;
+export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
+
+export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
+  efectivo: "Efectivo",
+  transferencia: "Transferencia",
+  tarjeta: "Tarjeta",
+  otro: "Otro",
+};
+
+export type QuotePaymentInput = {
+  id?: number;
+  amount: number;
+  paidAt: string;
+  method: PaymentMethod;
+  notes?: string | null;
+};
+
 export type ClientInput = {
   name: string;
   phone?: string | null;
@@ -124,6 +142,8 @@ export type QuoteInput = {
   notes?: string | null;
   status: QuoteStatus;
   depositAmount?: number;
+  foodCost?: number;
+  payments?: QuotePaymentInput[];
 };
 
 export type ShoppingLine = {
@@ -150,6 +170,10 @@ export function isIngredientUnit(value: unknown): value is IngredientUnit {
 
 export function isQuoteStatus(value: unknown): value is QuoteStatus {
   return typeof value === "string" && (QUOTE_STATUSES as readonly string[]).includes(value);
+}
+
+export function isPaymentMethod(value: unknown): value is PaymentMethod {
+  return typeof value === "string" && (PAYMENT_METHODS as readonly string[]).includes(value);
 }
 
 export function quoteTotal(items: QuoteItem[]): number {
