@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, canClearAllData, getDataMode, getDataModeLabel, type AuthUser } from "../api";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import { useAuth } from "../components/AuthGate";
 import { PageHeader } from "../components/EmptyState";
 import { FormField } from "../components/FormField";
@@ -18,9 +19,22 @@ export function SettingsPage() {
   const [newPassword, setNewPassword] = useState("");
   const [currentPassword, setCurrentPassword] = useState("");
   const [nextPassword, setNextPassword] = useState("");
+  const [resetUserId, setResetUserId] = useState<number | null>(null);
+  const [resetPassword, setResetPassword] = useState("");
+  const [removeUser, setRemoveUser] = useState<AuthUser | null>(null);
+  const [recoveryCode, setRecoveryCode] = useState<string | null>(null);
+  const [hasRecovery, setHasRecovery] = useState(false);
 
   useEffect(() => {
-    void api.authListUsers().then(setUsers).catch(() => setUsers([user]));
+    void (async () => {
+      try {
+        const [list, status] = await Promise.all([api.authListUsers(), api.authStatus()]);
+        setUsers(list);
+        setHasRecovery(status.hasRecovery);
+      } catch {
+        setUsers([user]);
+      }
+    })();
   }, [user]);
 
   function saveCompany(e: React.FormEvent) {
@@ -55,6 +69,45 @@ export function SettingsPage() {
       setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo cambiar la contraseña");
+    }
+  }
+
+  async function removeTeammate() {
+    if (!removeUser) return;
+    try {
+      await api.authDeleteUser(removeUser.id);
+      setUsers(await api.authListUsers());
+      setRemoveUser(null);
+      setMsg("Persona quitada del equipo.");
+      setError("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo quitar");
+    }
+  }
+
+  async function resetTeammate(e: React.FormEvent) {
+    e.preventDefault();
+    if (resetUserId == null) return;
+    try {
+      await api.authResetUserPassword({ userId: resetUserId, password: resetPassword });
+      setResetUserId(null);
+      setResetPassword("");
+      setMsg("Contraseña restablecida. Esa persona debe entrar de nuevo.");
+      setError("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo restablecer");
+    }
+  }
+
+  async function issueRecovery() {
+    try {
+      const res = await api.authIssueRecoveryCode();
+      setRecoveryCode(res.recoveryCode);
+      setHasRecovery(true);
+      setMsg("Código nuevo generado. El anterior deja de servir.");
+      setError("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo generar el código");
     }
   }
 
@@ -213,7 +266,7 @@ export function SettingsPage() {
           </button>
         </form>
 
-        <form className="panel form-grid" onSubmit={(e) => void addUser(e)}>
+        <section className="panel form-grid">
           <h2>Equipo</h2>
           <p className="meta">
             Sesión de {user.name} ({user.email}). En modo servidor, las APIs rechazan peticiones sin
@@ -223,37 +276,105 @@ export function SettingsPage() {
           {users.length ? (
             <ul className="checklist">
               {users.map((u) => (
-                <li key={u.id}>
-                  {u.name} · {u.email}
+                <li key={u.id} className="inline-row" style={{ justifyContent: "space-between", gap: 8 }}>
+                  <span>
+                    {u.name} · {u.email}
+                    {u.id === user.id ? " (tú)" : ""}
+                  </span>
+                  {u.id !== user.id ? (
+                    <span className="page-actions">
+                      <button
+                        type="button"
+                        className="btn"
+                        onClick={() => {
+                          setResetUserId(u.id);
+                          setResetPassword("");
+                        }}
+                      >
+                        Contraseña
+                      </button>
+                      <button type="button" className="btn danger" onClick={() => setRemoveUser(u)}>
+                        Quitar
+                      </button>
+                    </span>
+                  ) : null}
                 </li>
               ))}
             </ul>
           ) : null}
-          <FormField label="Nombre">
-            <input value={newName} onChange={(e) => setNewName(e.target.value)} required />
-          </FormField>
-          <FormField label="Email">
-            <input
-              type="email"
-              value={newEmail}
-              onChange={(e) => setNewEmail(e.target.value)}
-              required
-            />
-          </FormField>
-          <FormField label="Contraseña (mín. 8)">
-            <input
-              type="password"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              minLength={8}
-              required
-              autoComplete="new-password"
-            />
-          </FormField>
-          <button type="submit" className="btn primary">
-            Agregar persona
-          </button>
-        </form>
+          {resetUserId != null ? (
+            <form className="form-grid" onSubmit={(e) => void resetTeammate(e)}>
+              <FormField
+                label={`Nueva contraseña para ${users.find((u) => u.id === resetUserId)?.name ?? "la persona"}`}
+              >
+                <input
+                  type="password"
+                  value={resetPassword}
+                  onChange={(e) => setResetPassword(e.target.value)}
+                  minLength={8}
+                  required
+                  autoComplete="new-password"
+                />
+              </FormField>
+              <div className="form-actions">
+                <button type="submit" className="btn primary">
+                  Restablecer
+                </button>
+                <button
+                  type="button"
+                  className="btn ghost"
+                  onClick={() => {
+                    setResetUserId(null);
+                    setResetPassword("");
+                  }}
+                >
+                  Cancelar
+                </button>
+              </div>
+            </form>
+          ) : null}
+          <form className="form-grid" onSubmit={(e) => void addUser(e)}>
+            <FormField label="Nombre">
+              <input value={newName} onChange={(e) => setNewName(e.target.value)} required />
+            </FormField>
+            <FormField label="Email">
+              <input
+                type="email"
+                value={newEmail}
+                onChange={(e) => setNewEmail(e.target.value)}
+                required
+              />
+            </FormField>
+            <FormField label="Contraseña (mín. 8)">
+              <input
+                type="password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                minLength={8}
+                required
+                autoComplete="new-password"
+              />
+            </FormField>
+            <button type="submit" className="btn primary">
+              Agregar persona
+            </button>
+          </form>
+        </section>
+
+        <section className="panel">
+          <h2>Código de recuperación</h2>
+          <p className="meta">
+            {hasRecovery
+              ? "El equipo ya tiene un código. Si lo perdiste, genera uno nuevo: el anterior deja de servir. En el login usa “Olvidé mi contraseña”."
+              : "Aún no hay código. Genera uno y guárdalo: sirve para restablecer cualquier cuenta del equipo."}
+          </p>
+          {recoveryCode ? <p className="recovery-code">{recoveryCode}</p> : null}
+          <div className="form-actions" style={{ marginTop: 12 }}>
+            <button type="button" className="btn primary" onClick={() => void issueRecovery()}>
+              {hasRecovery ? "Generar código nuevo" : "Generar código"}
+            </button>
+          </div>
+        </section>
 
         <form className="panel form-grid" onSubmit={(e) => void changePassword(e)}>
           <h2>Cambiar mi contraseña</h2>
@@ -318,6 +439,19 @@ export function SettingsPage() {
           )}
         </section>
       </div>
+
+      <ConfirmDialog
+        open={Boolean(removeUser)}
+        title="Quitar del equipo"
+        message={
+          removeUser
+            ? `¿Quitar a ${removeUser.name} (${removeUser.email})? Ya no podrá entrar.`
+            : ""
+        }
+        confirmLabel="Quitar"
+        onCancel={() => setRemoveUser(null)}
+        onConfirm={() => void removeTeammate()}
+      />
     </div>
   );
 }

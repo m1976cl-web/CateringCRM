@@ -1070,6 +1070,18 @@ table.data th {
   letter-spacing: 0.2em;
 }
 
+.recovery-code {
+  margin: 8px 0 0;
+  padding: 12px;
+  text-align: center;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 1.25rem;
+  letter-spacing: 0.12em;
+  font-weight: 700;
+  background: var(--panel-2, rgba(0, 0, 0, 0.04));
+  border-radius: 10px;
+}
+
 .error-inline {
   color: var(--danger);
   font-weight: 600;

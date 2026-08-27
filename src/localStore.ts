@@ -1,5 +1,5 @@
 import { applyPurchaseToStock, buildShoppingLines, quantityAfterStock } from "../shared/shopping";
-import { hashPassword, randomToken, sha256Hex, verifyPassword } from "../shared/password";
+import { hashPassword, normalizeRecoveryCode, randomRecoveryCode, randomToken, sha256Hex, verifyPassword } from "../shared/password";
 import {
   quoteTotal,
   type ClientInput,
@@ -99,6 +99,7 @@ type Store = {
     expiresAt: string;
     createdAt: string;
   }>;
+  teamRecovery: { salt: string; hash: string; createdAt: string } | null;
   seq: Record<string, number>;
 };
 
@@ -113,6 +114,7 @@ function empty(): Store {
     shoppingLists: [],
     teamUsers: [],
     teamSessions: [],
+    teamRecovery: null,
     seq: {},
   };
 }
@@ -124,6 +126,7 @@ function read(): Store {
     const parsed = { ...empty(), ...(JSON.parse(raw) as Store) } as Store;
     parsed.teamUsers = parsed.teamUsers ?? [];
     parsed.teamSessions = parsed.teamSessions ?? [];
+    parsed.teamRecovery = parsed.teamRecovery ?? null;
     parsed.quotes = parsed.quotes.map(normalizeStoredQuote);
     return parsed;
   } catch {
@@ -289,6 +292,13 @@ async function createLocalSession(store: Store, userId: number): Promise<string>
     createdAt: nowIso(),
   });
   return token;
+}
+
+async function issueLocalRecovery(store: Store): Promise<string> {
+  const code = randomRecoveryCode();
+  const hashed = await hashPassword(normalizeRecoveryCode(code));
+  store.teamRecovery = { salt: hashed.salt, hash: hashed.hash, createdAt: nowIso() };
+  return code;
 }
 
 function paymentsForBody(store: Store, body: QuoteInput): QuotePayment[] {
@@ -846,7 +856,7 @@ export const local = {
     const store = read();
     const configured = store.teamUsers.length > 0;
     const user = configured ? await localSessionUser(store) : null;
-    return { configured, user };
+    return { configured, user, hasRecovery: Boolean(store.teamRecovery) };
   },
 
   async authSetup(body: { name: string; email: string; password: string }) {
@@ -869,8 +879,9 @@ export const local = {
     };
     store.teamUsers.push(row);
     const token = await createLocalSession(store, row.id);
+    const recoveryCode = await issueLocalRecovery(store);
     write(store);
-    return { user: toPublicUser(row), token };
+    return { user: toPublicUser(row), token, recoveryCode };
   },
 
   async authLogin(body: { email: string; password: string }) {
@@ -942,5 +953,65 @@ export const local = {
     row.updatedAt = nowIso();
     write(store);
     return { ok: true };
+  },
+
+  async authDeleteUser(id: number) {
+    const store = read();
+    const me = await localSessionUser(store);
+    if (!me) fail("Inicia sesión para continuar");
+    if (id === me.id) fail("No puedes quitarte a ti mismo");
+    if (store.teamUsers.length <= 1) fail("Debe quedar al menos una persona con acceso");
+    if (!store.teamUsers.some((u) => u.id === id)) fail("Usuario no encontrado");
+    store.teamUsers = store.teamUsers.filter((u) => u.id !== id);
+    store.teamSessions = store.teamSessions.filter((s) => s.userId !== id);
+    write(store);
+    return { ok: true };
+  },
+
+  async authResetUserPassword(body: { userId: number; password: string }) {
+    const store = read();
+    const me = await localSessionUser(store);
+    if (!me) fail("Inicia sesión para continuar");
+    if (body.userId === me.id) fail("Para tu contraseña usa Cambiar mi contraseña");
+    if (body.password.length < 8) fail("La contraseña debe tener al menos 8 caracteres");
+    const row = store.teamUsers.find((u) => u.id === body.userId);
+    if (!row) fail("Usuario no encontrado");
+    const hashed = await hashPassword(body.password);
+    row.passwordSalt = hashed.salt;
+    row.passwordHash = hashed.hash;
+    row.updatedAt = nowIso();
+    store.teamSessions = store.teamSessions.filter((s) => s.userId !== row.id);
+    write(store);
+    return { ok: true };
+  },
+
+  async authIssueRecoveryCode() {
+    const store = read();
+    if (store.teamUsers.length > 0 && !(await localSessionUser(store))) {
+      fail("Inicia sesión para continuar");
+    }
+    const recoveryCode = await issueLocalRecovery(store);
+    write(store);
+    return { recoveryCode };
+  },
+
+  async authRecover(body: { email: string; code: string; password: string }) {
+    const store = read();
+    const email = normalizeEmail(body.email);
+    const row = store.teamUsers.find((u) => u.email === email);
+    const recovery = store.teamRecovery;
+    const codeOk =
+      recovery &&
+      (await verifyPassword(normalizeRecoveryCode(body.code), recovery.salt, recovery.hash));
+    if (!row || !codeOk) fail("Email o código incorrectos");
+    if (body.password.length < 8) fail("La contraseña debe tener al menos 8 caracteres");
+    const hashed = await hashPassword(body.password);
+    row.passwordSalt = hashed.salt;
+    row.passwordHash = hashed.hash;
+    row.updatedAt = nowIso();
+    store.teamSessions = store.teamSessions.filter((s) => s.userId !== row.id);
+    const token = await createLocalSession(store, row.id);
+    write(store);
+    return { user: toPublicUser(row), token };
   },
 };
