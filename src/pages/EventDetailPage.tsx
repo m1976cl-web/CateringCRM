@@ -408,7 +408,13 @@ export function EventDetailPage() {
                 <span className="meta">
                   {" "}
                   {eventQuotes.length
-                    ? `${eventQuotes.length} guardada(s)`
+                    ? `${eventQuotes.length} guardada(s)${
+                        eventQuotes[0].status === "aceptada"
+                          ? " · aceptada"
+                          : eventQuotes[0].depositAmount
+                            ? ` · anticipo ${formatMoney(eventQuotes[0].depositAmount)}`
+                            : ""
+                      }`
                     : "Aún no hay propuesta"}
                 </span>
               </span>

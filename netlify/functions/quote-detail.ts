@@ -3,8 +3,10 @@ import { eq } from "drizzle-orm";
 import { db } from "../../db";
 import { clients, events, quotes } from "../../db/schema";
 import { isQuoteStatus, quoteTotal } from "../../shared/types";
+import { normalizeDeposit } from "../../shared/quoteLifecycle";
 import { asNumber, asOptionalString, error, json, now, parseId, readJson } from "./_shared/http";
 import { parseItems } from "./_shared/quotes";
+import { syncEventFromQuote } from "./_shared/quoteLifecycle";
 
 async function quoteDetail(id: number) {
   const [row] = await db
@@ -17,6 +19,7 @@ async function quoteDetail(id: number) {
       total: quotes.total,
       notes: quotes.notes,
       status: quotes.status,
+      depositAmount: quotes.depositAmount,
       createdAt: quotes.createdAt,
       updatedAt: quotes.updatedAt,
       eventTitle: events.title,
@@ -68,12 +71,14 @@ export default async (req: Request, context: Context) => {
         total: quoteTotal(items),
         notes: asOptionalString(body.notes),
         status: body.status,
+        depositAmount: normalizeDeposit(body.depositAmount),
         updatedAt: now(),
       })
       .where(eq(quotes.id, id))
       .returning();
 
     if (!updated) return error("Cotización no encontrada", 404);
+    await syncEventFromQuote(eventId, body.status);
     return json(await quoteDetail(id));
   }
 
