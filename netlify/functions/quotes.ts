@@ -3,8 +3,10 @@ import { desc, eq } from "drizzle-orm";
 import { db } from "../../db";
 import { clients, events, quotes } from "../../db/schema";
 import { isQuoteStatus, quoteTotal } from "../../shared/types";
+import { normalizeDeposit } from "../../shared/quoteLifecycle";
 import { asNumber, asOptionalString, error, json, now, readJson } from "./_shared/http";
 import { parseItems } from "./_shared/quotes";
+import { syncEventFromQuote } from "./_shared/quoteLifecycle";
 
 export default async (req: Request, _context: Context) => {
   if (req.method === "GET") {
@@ -18,6 +20,7 @@ export default async (req: Request, _context: Context) => {
         total: quotes.total,
         notes: quotes.notes,
         status: quotes.status,
+        depositAmount: quotes.depositAmount,
         createdAt: quotes.createdAt,
         eventTitle: events.title,
         clientName: clients.name,
@@ -50,10 +53,13 @@ export default async (req: Request, _context: Context) => {
       total: quoteTotal(items),
       notes: asOptionalString(body.notes),
       status: body.status,
+      depositAmount: normalizeDeposit(body.depositAmount),
       createdAt: now(),
       updatedAt: now(),
     })
     .returning();
+
+  await syncEventFromQuote(eventId, body.status);
 
   return json(created, 201);
 };

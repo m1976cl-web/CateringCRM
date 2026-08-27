@@ -122,6 +122,7 @@ export const quotes = pgTable("quotes", {
   total: doublePrecision("total").notNull().default(0),
   notes: text("notes"),
   status: varchar("status", { length: 40 }).$type<QuoteStatus>().notNull().default("borrador"),
+  depositAmount: doublePrecision("deposit_amount").notNull().default(0),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
