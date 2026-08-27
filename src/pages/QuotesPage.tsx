@@ -308,7 +308,7 @@ export function QuotesPage() {
               <option value="">Elegir…</option>
               {events.map((ev) => (
                 <option key={ev.id} value={ev.id}>
-                  {ev.title} — {ev.clientName}
+                  {ev.title} — {ev.clientName} — {formatDate(ev.eventDate)}
                 </option>
               ))}
             </select>

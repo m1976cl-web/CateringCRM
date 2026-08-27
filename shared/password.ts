@@ -50,3 +50,19 @@ export async function sha256Hex(value: string): Promise<string> {
 export function randomToken(): string {
   return toHex(crypto.getRandomValues(new Uint8Array(32)));
 }
+
+const RECOVERY_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+export function randomRecoveryCode(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(12));
+  let out = "";
+  for (let i = 0; i < bytes.length; i += 1) {
+    out += RECOVERY_ALPHABET[bytes[i] % RECOVERY_ALPHABET.length];
+    if (i === 3 || i === 7) out += "-";
+  }
+  return out;
+}
+
+export function normalizeRecoveryCode(code: string): string {
+  return code.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+}

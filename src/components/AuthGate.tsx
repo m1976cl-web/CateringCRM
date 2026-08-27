@@ -20,16 +20,21 @@ export function useAuth(): AuthContextValue {
 export function AuthGate({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [configured, setConfigured] = useState(false);
+  const [hasRecovery, setHasRecovery] = useState(false);
   const [ready, setReady] = useState(false);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [code, setCode] = useState("");
+  const [recover, setRecover] = useState(false);
+  const [recoveryCode, setRecoveryCode] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
   async function refresh() {
     const status = await api.authStatus();
     setConfigured(status.configured);
+    setHasRecovery(status.hasRecovery);
     setUser(status.user);
   }
 
@@ -52,6 +57,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
       setSessionToken(null);
       setUser(null);
       setConfigured(true);
+      setRecover(false);
     }
   }
 
@@ -64,6 +70,8 @@ export function AuthGate({ children }: { children: ReactNode }) {
       setSessionToken(res.token);
       setUser(res.user);
       setConfigured(true);
+      setHasRecovery(true);
+      setRecoveryCode(res.recoveryCode);
       setPassword("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo crear el acceso");
@@ -88,7 +96,48 @@ export function AuthGate({ children }: { children: ReactNode }) {
     }
   }
 
+  async function onRecover(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      const res = await api.authRecover({ email, code, password });
+      setSessionToken(res.token);
+      setUser(res.user);
+      setPassword("");
+      setCode("");
+      setRecover(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo recuperar el acceso");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   if (!ready) return <div className="loading">Cargando…</div>;
+
+  if (user && recoveryCode) {
+    return (
+      <div className="pin-gate">
+        <div className="panel pin-card form-grid">
+          <h1>Guarda este código</h1>
+          <p className="meta">
+            Si olvidas la contraseña, entra con tu email y este código. No se envía por correo:
+            anótalo en un lugar seguro.
+          </p>
+          <p className="recovery-code">{recoveryCode}</p>
+          <button
+            type="button"
+            className="btn primary"
+            style={{ width: "100%", marginTop: 12 }}
+            onClick={() => setRecoveryCode(null)}
+          >
+            Ya lo guardé
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (user) {
     return <AuthContext.Provider value={{ user, refresh, logout }}>{children}</AuthContext.Provider>;
@@ -96,12 +145,19 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
   return (
     <div className="pin-gate">
-      <form className="panel pin-card form-grid" onSubmit={configured ? onLogin : onSetup}>
+      <form
+        className="panel pin-card form-grid"
+        onSubmit={configured ? (recover ? onRecover : onLogin) : onSetup}
+      >
         <h1>CateringCRM</h1>
         <p className="meta">
-          {configured
-            ? "Entra con el email y la contraseña del equipo."
-            : "Crea el primer acceso. Después la app pedirá login para leer y escribir datos."}
+          {!configured
+            ? "Crea el primer acceso. Después la app pedirá login para leer y escribir datos."
+            : recover
+              ? hasRecovery
+                ? "Usa el email de la cuenta y el código de recuperación del equipo."
+                : "Aún no hay código de recuperación. Pide a alguien del equipo que genere uno en Ajustes."
+              : "Entra con el email y la contraseña del equipo."}
         </p>
         {!configured ? (
           <FormField label="Nombre">
@@ -123,20 +179,44 @@ export function AuthGate({ children }: { children: ReactNode }) {
             autoFocus
           />
         </FormField>
-        <FormField label="Contraseña (mín. 8)">
+        {configured && recover ? (
+          <FormField label="Código de recuperación" hint="El del equipo, con o sin guiones.">
+            <input
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              required
+              autoComplete="one-time-code"
+            />
+          </FormField>
+        ) : null}
+        <FormField label={configured && recover ? "Nueva contraseña (mín. 8)" : "Contraseña (mín. 8)"}>
           <input
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
             minLength={8}
-            autoComplete={configured ? "current-password" : "new-password"}
+            autoComplete={configured && !recover ? "current-password" : "new-password"}
           />
         </FormField>
         {error ? <p className="error-inline">{error}</p> : null}
         <button type="submit" className="btn primary" style={{ width: "100%", marginTop: 12 }} disabled={saving}>
-          {saving ? "…" : configured ? "Entrar" : "Crear acceso"}
+          {saving ? "…" : !configured ? "Crear acceso" : recover ? "Restablecer y entrar" : "Entrar"}
         </button>
+        {configured ? (
+          <button
+            type="button"
+            className="btn ghost"
+            style={{ width: "100%" }}
+            onClick={() => {
+              setRecover((v) => !v);
+              setError("");
+              setCode("");
+            }}
+          >
+            {recover ? "Volver al login" : "Olvidé mi contraseña"}
+          </button>
+        ) : null}
       </form>
     </div>
   );
