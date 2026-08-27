@@ -17,19 +17,33 @@ import { SearchBar } from "../components/SearchBar";
 import { estimateFoodCost } from "../../shared/shopping";
 import { matchesQuery } from "../search";
 import { loadCompanySettings, quoteTaxBreakdown } from "../settings";
+import { quoteMoney } from "../quoteDisplay";
 import { nextQuoteNumber } from "../quotes";
-import { quoteBalance } from "../../shared/quoteLifecycle";
+import { sumPayments } from "../../shared/quoteLifecycle";
 import { whatsappPhoneUrl, whatsappTextUrl } from "../whatsapp";
 import {
+  PAYMENT_METHODS,
+  PAYMENT_METHOD_LABELS,
   QUOTE_STATUSES,
   QUOTE_STATUS_LABELS,
   SERVICE_TYPE_LABELS,
   quoteTotal,
+  type PaymentMethod,
   type QuoteItem,
+  type QuotePaymentInput,
   type QuoteStatus,
 } from "../../shared/types";
 
 const blankItem = (): QuoteItem => ({ description: "", quantity: 1, unitPrice: 0 });
+
+function blankPayment(amount = 0): QuotePaymentInput {
+  return {
+    amount,
+    paidAt: new Date().toISOString(),
+    method: "transferencia",
+    notes: "",
+  };
+}
 
 function whatsappQuoteUrl(q: {
   quoteNumber: string | null;
@@ -58,7 +72,7 @@ function whatsappQuoteUrl(q: {
     ...(q.iva > 0 ? [`IVA ${q.ivaRate}%: ${formatMoney(q.iva)}`] : []),
     `Total: ${formatMoney(q.grandTotal)}`,
     ...(q.deposit > 0
-      ? [`Anticipo: ${formatMoney(q.deposit)}`, `Saldo: ${formatMoney(q.balance)}`]
+      ? [`Pagado: ${formatMoney(q.deposit)}`, `Saldo: ${formatMoney(q.balance)}`]
       : []),
   ];
   const text = lines.join("\n");
@@ -75,7 +89,8 @@ export function QuotesPage() {
   const [quoteDate, setQuoteDate] = useState(toDatetimeLocal(new Date()));
   const [status, setStatus] = useState<QuoteStatus>("borrador");
   const [notes, setNotes] = useState("");
-  const [deposit, setDeposit] = useState("");
+  const [payments, setPayments] = useState<QuotePaymentInput[]>([]);
+  const [foodCost, setFoodCost] = useState(0);
   const [saveMsg, setSaveMsg] = useState("");
   const [items, setItems] = useState<QuoteItem[]>([blankItem()]);
   const [error, setError] = useState("");
@@ -88,10 +103,8 @@ export function QuotesPage() {
 
   const total = useMemo(() => quoteTotal(items), [items]);
   const tax = useMemo(() => quoteTaxBreakdown(total, settings), [total, settings]);
-  const money = useMemo(
-    () => quoteBalance(tax.total, Number(deposit) || 0),
-    [tax.total, deposit],
-  );
+  const paid = useMemo(() => sumPayments(payments), [payments]);
+  const money = useMemo(() => quoteMoney({ total, depositAmount: paid, foodCost }, settings), [total, paid, foodCost, settings]);
   const visibleQuotes = useMemo(
     () =>
       quotes.filter((q) =>
@@ -143,7 +156,8 @@ export function QuotesPage() {
     setQuoteDate(toDatetimeLocal(new Date()));
     setStatus("borrador");
     setNotes("");
-    setDeposit("");
+    setPayments([]);
+    setFoodCost(0);
     setItems([blankItem()]);
   }
 
@@ -154,7 +168,8 @@ export function QuotesPage() {
     setQuoteDate(toDatetimeLocal(q.quoteDate));
     setStatus(q.status);
     setNotes(q.notes ?? "");
-    setDeposit(q.depositAmount ? String(q.depositAmount) : "");
+    setPayments(q.payments?.length ? q.payments.map((p) => ({ ...p })) : []);
+    setFoodCost(q.foodCost ?? 0);
     setItems(q.items.length ? q.items : [blankItem()]);
   }
 
@@ -165,7 +180,8 @@ export function QuotesPage() {
     setQuoteDate(toDatetimeLocal(new Date()));
     setStatus("borrador");
     setNotes(q.notes ?? "");
-    setDeposit(q.depositAmount ? String(q.depositAmount) : "");
+    setPayments(q.payments?.length ? q.payments.map((p) => ({ ...p, id: undefined })) : []);
+    setFoodCost(q.foodCost ?? 0);
     setItems(q.items.length ? q.items.map((i) => ({ ...i })) : [blankItem()]);
   }
 
@@ -193,9 +209,9 @@ export function QuotesPage() {
         }),
       };
     });
-    const foodCost = estimateFoodCost(forCost);
-    const sale = ev.estimatedCost ?? foodCost;
-    applyEventFill(ev, sale, foodCost);
+    const estimatedFood = estimateFoodCost(forCost);
+    const sale = ev.estimatedCost ?? estimatedFood;
+    applyEventFill(ev, sale, estimatedFood);
   }
 
   function applyEventFill(ev: EventDetail, sale: number, foodCost: number) {
@@ -217,6 +233,7 @@ export function QuotesPage() {
         .filter(Boolean)
         .join("\n"),
     );
+    setFoodCost(Math.round(foodCost));
   }
 
   async function fillFromEvent() {
@@ -239,7 +256,8 @@ export function QuotesPage() {
         items: items.filter((i) => i.description.trim() && i.quantity > 0),
         notes: notes || null,
         status,
-        depositAmount: Number(deposit) || 0,
+        foodCost,
+        payments,
       };
       if (editingId) await api.updateQuote(editingId, payload);
       else await api.createQuote(payload);
@@ -406,46 +424,114 @@ export function QuotesPage() {
               ) : (
                 <strong className="grand">Total: {formatMoney(tax.total)}</strong>
               )}
-              {money.deposit > 0 ? (
+              {money.foodCost > 0 ? (
                 <>
-                  <span className="meta">Anticipo: {formatMoney(money.deposit)}</span>
-                  <strong>Saldo: {formatMoney(money.balance)}</strong>
+                  <span className="meta">Costo ingredientes: {formatMoney(money.foodCost)}</span>
+                  <span className={`meta ${money.margin < 0 ? "tone-warn" : ""}`}>
+                    Margen: {formatMoney(money.margin)}
+                    {money.marginPct != null ? ` (${money.marginPct}%)` : ""}
+                  </span>
                 </>
               ) : null}
+              {money.deposit > 0 ? (
+                <>
+                  <span className="meta">Pagado: {formatMoney(money.deposit)}</span>
+                  <strong>Saldo: {formatMoney(money.balance)}</strong>
+                </>
+              ) : (
+                <span className="meta">Sin abonos · saldo {formatMoney(money.balance)}</span>
+              )}
             </div>
           </div>
 
-          <FormField
-            label="Anticipo (CLP)"
-            hint="Lo que el cliente paga al aceptar. El saldo queda para el día del evento."
-          >
-            <div className="inline-row">
-              <input
-                type="number"
-                min={0}
-                step="1"
-                value={deposit}
-                onChange={(e) => setDeposit(e.target.value)}
-                placeholder="0"
-              />
-              <button
-                type="button"
-                className="btn"
-                disabled={tax.total <= 0}
-                onClick={() => setDeposit(String(Math.round(tax.total * 0.3)))}
-              >
-                30%
-              </button>
-              <button
-                type="button"
-                className="btn"
-                disabled={tax.total <= 0}
-                onClick={() => setDeposit(String(Math.round(tax.total * 0.5)))}
-              >
-                50%
-              </button>
+          <div>
+            <div className="page-header" style={{ marginBottom: 8 }}>
+              <h3 style={{ margin: 0 }}>Abonos</h3>
+              <div className="page-actions">
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={tax.total <= 0}
+                  onClick={() => setPayments([...payments, blankPayment(Math.round(tax.total * 0.3))])}
+                >
+                  + 30%
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={tax.total <= 0}
+                  onClick={() => setPayments([...payments, blankPayment(Math.round(tax.total * 0.5))])}
+                >
+                  + 50%
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => setPayments([...payments, blankPayment()])}
+                >
+                  Agregar abono
+                </button>
+              </div>
             </div>
-          </FormField>
+            {payments.length === 0 ? (
+              <p className="meta">Registra cada pago del cliente. El saldo se ve también en el evento.</p>
+            ) : (
+              payments.map((pay, idx) => (
+                <div key={pay.id ?? `p-${idx}`} className="inline-row" style={{ marginBottom: 8 }}>
+                  <FormField label="Monto">
+                    <input
+                      type="number"
+                      min={0}
+                      step="1"
+                      value={pay.amount}
+                      onChange={(e) => {
+                        const next = [...payments];
+                        next[idx] = { ...pay, amount: Number(e.target.value) || 0 };
+                        setPayments(next);
+                      }}
+                    />
+                  </FormField>
+                  <FormField label="Fecha">
+                    <input
+                      type="datetime-local"
+                      value={toDatetimeLocal(pay.paidAt)}
+                      onChange={(e) => {
+                        const next = [...payments];
+                        next[idx] = {
+                          ...pay,
+                          paidAt: e.target.value ? new Date(e.target.value).toISOString() : pay.paidAt,
+                        };
+                        setPayments(next);
+                      }}
+                    />
+                  </FormField>
+                  <FormField label="Medio">
+                    <select
+                      value={pay.method}
+                      onChange={(e) => {
+                        const next = [...payments];
+                        next[idx] = { ...pay, method: e.target.value as PaymentMethod };
+                        setPayments(next);
+                      }}
+                    >
+                      {PAYMENT_METHODS.map((m) => (
+                        <option key={m} value={m}>
+                          {PAYMENT_METHOD_LABELS[m]}
+                        </option>
+                      ))}
+                    </select>
+                  </FormField>
+                  <button
+                    type="button"
+                    className="btn danger"
+                    onClick={() => setPayments(payments.filter((_, i) => i !== idx))}
+                  >
+                    Quitar
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
 
           <FormField label="Notas">
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} />
@@ -477,19 +563,21 @@ export function QuotesPage() {
           ) : (
             <div className="list" style={{ marginTop: 12 }}>
               {visibleQuotes.map((q) => {
-                const rowTax = quoteTaxBreakdown(q.total, settings);
-                const rowMoney = quoteBalance(rowTax.total, q.depositAmount ?? 0);
+                const rowMoney = quoteMoney(q, settings);
                 return (
                 <div key={q.id} className="list-item">
                   <div>
                     <h3>
-                      {q.quoteNumber || `Cotización #${q.id}`} — {formatMoney(rowTax.total)}
+                      {q.quoteNumber || `Cotización #${q.id}`} — {formatMoney(rowMoney.total)}
                     </h3>
                     <div className="meta">
                       {q.clientName} · {q.eventTitle} · {formatDate(q.quoteDate)}
-                      {rowTax.addIva ? ` · IVA ${rowTax.ivaRate}% incluido` : ""}
+                      {rowMoney.addIva ? ` · IVA ${rowMoney.ivaRate}% incluido` : ""}
+                      {rowMoney.foodCost > 0
+                        ? ` · margen ${formatMoney(rowMoney.margin)}${rowMoney.marginPct != null ? ` (${rowMoney.marginPct}%)` : ""}`
+                        : ""}
                       {rowMoney.deposit > 0
-                        ? ` · anticipo ${formatMoney(rowMoney.deposit)} · saldo ${formatMoney(rowMoney.balance)}`
+                        ? ` · pagado ${formatMoney(rowMoney.deposit)} · saldo ${formatMoney(rowMoney.balance)}`
                         : ""}
                     </div>
                   </div>
@@ -499,9 +587,9 @@ export function QuotesPage() {
                       className="btn"
                       href={whatsappQuoteUrl({
                         ...q,
-                        iva: rowTax.iva,
-                        ivaRate: rowTax.ivaRate,
-                        grandTotal: rowTax.total,
+                        iva: rowMoney.iva,
+                        ivaRate: rowMoney.ivaRate,
+                        grandTotal: rowMoney.total,
                         deposit: rowMoney.deposit,
                         balance: rowMoney.balance,
                       })}

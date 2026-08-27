@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, formatDate, formatMoney, type QuoteDetail } from "../api";
-import { loadCompanySettings, quoteTaxBreakdown } from "../settings";
-import { quoteBalance } from "../../shared/quoteLifecycle";
-import { QUOTE_STATUS_LABELS } from "../../shared/types";
+import { loadCompanySettings } from "../settings";
+import { quoteMoney } from "../quoteDisplay";
+import { PAYMENT_METHOD_LABELS, QUOTE_STATUS_LABELS } from "../../shared/types";
 
 export function QuotePrintPage() {
   const { id } = useParams();
@@ -31,8 +31,7 @@ export function QuotePrintPage() {
 
   const validUntil = new Date(quote.quoteDate);
   validUntil.setDate(validUntil.getDate() + (settings.quoteValidityDays || 15));
-  const tax = quoteTaxBreakdown(quote.total, settings);
-  const money = quoteBalance(tax.total, quote.depositAmount ?? 0);
+  const tax = quoteMoney(quote, settings);
 
   return (
     <div className="print-page">
@@ -110,11 +109,30 @@ export function QuotePrintPage() {
           <p style={{ textAlign: "right", fontSize: "1.25rem", margin: 0 }}>
             <strong>Total: {formatMoney(tax.total)}</strong>
           </p>
-          {money.deposit > 0 ? (
+          {tax.foodCost > 0 ? (
+            <span>
+              Costo ingredientes: {formatMoney(tax.foodCost)} · Margen: {formatMoney(tax.margin)}
+              {tax.marginPct != null ? ` (${tax.marginPct}%)` : ""}
+            </span>
+          ) : null}
+          {quote.payments?.length ? (
+            <div style={{ width: "100%" }}>
+              <h3 style={{ marginBottom: 6 }}>Pagos</h3>
+              <ul style={{ margin: 0, paddingLeft: 18 }}>
+                {quote.payments.map((p) => (
+                  <li key={p.id}>
+                    {formatDate(p.paidAt)} · {PAYMENT_METHOD_LABELS[p.method]} · {formatMoney(p.amount)}
+                    {p.notes ? ` — ${p.notes}` : ""}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          {tax.deposit > 0 ? (
             <>
-              <span>Anticipo: {formatMoney(money.deposit)}</span>
+              <span>Pagado: {formatMoney(tax.deposit)}</span>
               <p style={{ textAlign: "right", fontSize: "1.1rem", margin: 0 }}>
-                <strong>Saldo: {formatMoney(money.balance)}</strong>
+                <strong>Saldo: {formatMoney(tax.balance)}</strong>
               </p>
             </>
           ) : null}
@@ -124,11 +142,30 @@ export function QuotePrintPage() {
           <p style={{ textAlign: "right", fontSize: "1.25rem", margin: 0 }}>
             <strong>Total: {formatMoney(quote.total)}</strong>
           </p>
-          {money.deposit > 0 ? (
+          {tax.foodCost > 0 ? (
+            <span>
+              Costo ingredientes: {formatMoney(tax.foodCost)} · Margen: {formatMoney(tax.margin)}
+              {tax.marginPct != null ? ` (${tax.marginPct}%)` : ""}
+            </span>
+          ) : null}
+          {quote.payments?.length ? (
+            <div style={{ width: "100%" }}>
+              <h3 style={{ marginBottom: 6 }}>Pagos</h3>
+              <ul style={{ margin: 0, paddingLeft: 18 }}>
+                {quote.payments.map((p) => (
+                  <li key={p.id}>
+                    {formatDate(p.paidAt)} · {PAYMENT_METHOD_LABELS[p.method]} · {formatMoney(p.amount)}
+                    {p.notes ? ` — ${p.notes}` : ""}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          {tax.deposit > 0 ? (
             <>
-              <span>Anticipo: {formatMoney(money.deposit)}</span>
+              <span>Pagado: {formatMoney(tax.deposit)}</span>
               <p style={{ textAlign: "right", fontSize: "1.1rem", margin: 0 }}>
-                <strong>Saldo: {formatMoney(money.balance)}</strong>
+                <strong>Saldo: {formatMoney(tax.balance)}</strong>
               </p>
             </>
           ) : null}

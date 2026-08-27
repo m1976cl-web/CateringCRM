@@ -1046,7 +1046,12 @@ table.data th {
 }
 
 .pin-card {
-  width: min(360px, 100%);
+  width: min(400px, 100%);
+  text-align: left;
+}
+
+.pin-card h1,
+.pin-card > .meta {
   text-align: center;
 }
 

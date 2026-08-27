@@ -2,8 +2,12 @@ import type { Config, Context } from "@netlify/functions";
 import { and, count, eq, gte, lt, ne } from "drizzle-orm";
 import { db } from "../../db";
 import { clients, events, quotes, recipes, shoppingLists } from "../../db/schema";
+import { denyIfUnauthorized } from "./_shared/auth";
 
-export default async (_req: Request, _context: Context) => {
+export default async (req: Request, _context: Context) => {
+  const denied = await denyIfUnauthorized(req);
+  if (denied) return denied;
+
   const now = new Date();
   const in14 = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
 

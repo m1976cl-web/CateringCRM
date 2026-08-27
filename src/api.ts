@@ -7,6 +7,7 @@ import type {
   IngredientUnit,
   QuoteInput,
   QuoteItem,
+  QuotePaymentInput,
   QuoteStatus,
   RecipeInput,
   ServiceType,
@@ -15,6 +16,7 @@ import type {
 } from "../shared/types";
 import { local } from "./localStore";
 import { notifyOfflineFallback } from "./offlineBanner";
+import { getSessionToken } from "./session";
 import { isSupabaseConfigured } from "./supabase";
 import { cloud } from "./supabaseStore";
 
@@ -109,6 +111,8 @@ export type EventDetail = EventSummary & {
   updatedAt: string;
 };
 
+export type QuotePayment = QuotePaymentInput & { id: number };
+
 export type QuoteSummary = {
   id: number;
   eventId: number;
@@ -119,6 +123,8 @@ export type QuoteSummary = {
   notes: string | null;
   status: QuoteStatus;
   depositAmount: number;
+  foodCost: number;
+  payments: QuotePayment[];
   eventTitle: string;
   clientName: string;
   clientPhone: string | null;
@@ -175,6 +181,17 @@ export type Dashboard = {
   };
 };
 
+export type AuthUser = {
+  id: number;
+  email: string;
+  name: string;
+};
+
+export type AuthStatus = {
+  configured: boolean;
+  user: AuthUser | null;
+};
+
 export type DataMode = "supabase" | "netlify" | "static";
 
 const STATIC_ONLY = import.meta.env.VITE_STATIC_ONLY === "true";
@@ -204,10 +221,12 @@ export function canClearAllData(): boolean {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = getSessionToken();
   const res = await fetch(path, {
     ...init,
     headers: {
       "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(init?.headers ?? {}),
     },
   });
@@ -218,6 +237,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     );
   }
   return data as T;
+}
+
+function authRoute<Args extends unknown[], T>(
+  cloudFn: (...args: Args) => Promise<T>,
+  remoteFn: (...args: Args) => Promise<T>,
+  localFn: (...args: Args) => T | Promise<T>,
+): (...args: Args) => Promise<T> {
+  return async (...args: Args) => {
+    if (USE_SUPABASE) return cloudFn(...args);
+    if (STATIC_ONLY) return await localFn(...args);
+    return await remoteFn(...args);
+  };
 }
 
 function route<Args extends unknown[], T>(
@@ -308,6 +339,30 @@ const remote = {
     request<QuoteDetail>(`/api/quotes/${id}`, { method: "PUT", body: JSON.stringify(body) }),
   deleteQuote: (id: number) =>
     request<{ ok: boolean }>(`/api/quotes/${id}`, { method: "DELETE" }),
+
+  authStatus: () => request<AuthStatus>("/api/auth?action=status"),
+  authSetup: (body: { name: string; email: string; password: string }) =>
+    request<{ user: AuthUser; token: string }>("/api/auth?action=setup", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  authLogin: (body: { email: string; password: string }) =>
+    request<{ user: AuthUser; token: string }>("/api/auth?action=login", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  authLogout: () => request<{ ok: boolean }>("/api/auth?action=logout", { method: "POST" }),
+  authListUsers: () => request<AuthUser[]>("/api/auth?action=users"),
+  authAddUser: (body: { name: string; email: string; password: string }) =>
+    request<{ user: AuthUser }>("/api/auth?action=users", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  authChangePassword: (body: { currentPassword: string; password: string }) =>
+    request<{ ok: boolean }>("/api/auth?action=password", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
 };
 
 export const api = {
@@ -393,6 +448,18 @@ export const api = {
     local.updateQuote(id, body),
   ),
   deleteQuote: route(cloud.deleteQuote, remote.deleteQuote, (id) => local.deleteQuote(id)),
+
+  authStatus: authRoute(cloud.authStatus, remote.authStatus, () => local.authStatus()),
+  authSetup: authRoute(cloud.authSetup, remote.authSetup, (body) => local.authSetup(body)),
+  authLogin: authRoute(cloud.authLogin, remote.authLogin, (body) => local.authLogin(body)),
+  authLogout: authRoute(cloud.authLogout, remote.authLogout, () => local.authLogout()),
+  authListUsers: authRoute(cloud.authListUsers, remote.authListUsers, () => local.authListUsers()),
+  authAddUser: authRoute(cloud.authAddUser, remote.authAddUser, (body) => local.authAddUser(body)),
+  authChangePassword: authRoute(
+    cloud.authChangePassword,
+    remote.authChangePassword,
+    (body) => local.authChangePassword(body),
+  ),
 
   isEmpty: async (): Promise<boolean> => {
     if (USE_SUPABASE) return cloud.isEmpty();

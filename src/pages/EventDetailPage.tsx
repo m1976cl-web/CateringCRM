@@ -15,6 +15,7 @@ import { PageHeader } from "../components/EmptyState";
 import { QuoteBadge } from "../components/StatusBadge";
 import { recipeFitsService } from "../../shared/recipeMeta";
 import { estimateFoodCost } from "../../shared/shopping";
+import { clientMoneyFromQuotes, quoteMoney } from "../quoteDisplay";
 import {
   EVENT_STATUSES,
   EVENT_STATUS_LABELS,
@@ -231,6 +232,8 @@ export function EventDetailPage() {
   const salePrice = estimatedCost === "" ? 0 : Number(estimatedCost);
   const marginPct =
     salePrice > 0 && foodCost > 0 ? Math.round(((salePrice - foodCost) / salePrice) * 100) : null;
+  const quoteMoneyTotals = useMemo(() => clientMoneyFromQuotes(eventQuotes), [eventQuotes]);
+  const latestQuoteMoney = eventQuotes[0] ? quoteMoney(eventQuotes[0]) : null;
 
   const menuByService = useMemo(() => {
     const map = new Map<ServiceType, MenuRow[]>();
@@ -411,8 +414,8 @@ export function EventDetailPage() {
                     ? `${eventQuotes.length} guardada(s)${
                         eventQuotes[0].status === "aceptada"
                           ? " · aceptada"
-                          : eventQuotes[0].depositAmount
-                            ? ` · anticipo ${formatMoney(eventQuotes[0].depositAmount)}`
+                          : latestQuoteMoney && latestQuoteMoney.deposit > 0
+                            ? ` · pagado ${formatMoney(latestQuoteMoney.deposit)}`
                             : ""
                       }`
                     : "Aún no hay propuesta"}
@@ -430,6 +433,32 @@ export function EventDetailPage() {
                   Cotizar
                 </Link>
               )}
+            </li>
+            <li>
+              <span>
+                <strong>Pagos</strong>
+                <span className="meta">
+                  {" "}
+                  {quoteMoneyTotals.billed > 0
+                    ? `Pagado ${formatMoney(quoteMoneyTotals.paid)} · saldo ${formatMoney(quoteMoneyTotals.balance)}`
+                    : "Se calcula sobre cotizaciones aceptadas"}
+                </span>
+              </span>
+              <span
+                className={`badge ${
+                  quoteMoneyTotals.billed <= 0
+                    ? "tone-neutral"
+                    : quoteMoneyTotals.balance <= 0
+                      ? "tone-good"
+                      : "tone-warn"
+                }`}
+              >
+                {quoteMoneyTotals.billed <= 0
+                  ? "—"
+                  : quoteMoneyTotals.balance <= 0
+                    ? "Saldado"
+                    : formatMoney(quoteMoneyTotals.balance)}
+              </span>
             </li>
             <li>
               <span>
