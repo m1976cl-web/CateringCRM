@@ -190,6 +190,7 @@ export type AuthUser = {
 export type AuthStatus = {
   configured: boolean;
   user: AuthUser | null;
+  hasRecovery: boolean;
 };
 
 export type DataMode = "supabase" | "netlify" | "static";
@@ -342,7 +343,7 @@ const remote = {
 
   authStatus: () => request<AuthStatus>("/api/auth?action=status"),
   authSetup: (body: { name: string; email: string; password: string }) =>
-    request<{ user: AuthUser; token: string }>("/api/auth?action=setup", {
+    request<{ user: AuthUser; token: string; recoveryCode: string }>("/api/auth?action=setup", {
       method: "POST",
       body: JSON.stringify(body),
     }),
@@ -361,6 +362,20 @@ const remote = {
   authChangePassword: (body: { currentPassword: string; password: string }) =>
     request<{ ok: boolean }>("/api/auth?action=password", {
       method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  authDeleteUser: (id: number) =>
+    request<{ ok: boolean }>(`/api/auth?action=users&id=${id}`, { method: "DELETE" }),
+  authResetUserPassword: (body: { userId: number; password: string }) =>
+    request<{ ok: boolean }>("/api/auth?action=reset-password", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  authIssueRecoveryCode: () =>
+    request<{ recoveryCode: string }>("/api/auth?action=recovery-code", { method: "POST" }),
+  authRecover: (body: { email: string; code: string; password: string }) =>
+    request<{ user: AuthUser; token: string }>("/api/auth?action=recover", {
+      method: "POST",
       body: JSON.stringify(body),
     }),
 };
@@ -460,6 +475,20 @@ export const api = {
     remote.authChangePassword,
     (body) => local.authChangePassword(body),
   ),
+  authDeleteUser: authRoute(cloud.authDeleteUser, remote.authDeleteUser, (id) =>
+    local.authDeleteUser(id),
+  ),
+  authResetUserPassword: authRoute(
+    cloud.authResetUserPassword,
+    remote.authResetUserPassword,
+    (body) => local.authResetUserPassword(body),
+  ),
+  authIssueRecoveryCode: authRoute(
+    cloud.authIssueRecoveryCode,
+    remote.authIssueRecoveryCode,
+    () => local.authIssueRecoveryCode(),
+  ),
+  authRecover: authRoute(cloud.authRecover, remote.authRecover, (body) => local.authRecover(body)),
 
   isEmpty: async (): Promise<boolean> => {
     if (USE_SUPABASE) return cloud.isEmpty();

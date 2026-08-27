@@ -1,7 +1,14 @@
 import { and, count, eq, gt } from "drizzle-orm";
 import { db } from "../../../db";
-import { teamSessions, teamUsers } from "../../../db/schema";
-import { hashPassword, randomToken, sha256Hex, verifyPassword } from "../../../shared/password";
+import { teamRecovery, teamSessions, teamUsers } from "../../../db/schema";
+import {
+  hashPassword,
+  normalizeRecoveryCode,
+  randomRecoveryCode,
+  randomToken,
+  sha256Hex,
+  verifyPassword,
+} from "../../../shared/password";
 import { error, now } from "./http";
 
 export type AuthUser = {
@@ -112,4 +119,50 @@ export async function authenticate(email: string, password: string): Promise<Aut
 export function validateNewPassword(password: string): string | null {
   if (password.length < 8) return "La contraseña debe tener al menos 8 caracteres";
   return null;
+}
+
+export async function countTeamUsers(): Promise<number> {
+  const [row] = await db.select({ value: count() }).from(teamUsers);
+  return row?.value ?? 0;
+}
+
+export async function hasRecoveryCode(): Promise<boolean> {
+  const [row] = await db.select({ id: teamRecovery.id }).from(teamRecovery).limit(1);
+  return Boolean(row);
+}
+
+export async function replaceRecoveryCode(): Promise<string> {
+  const code = randomRecoveryCode();
+  const hashed = await hashPassword(normalizeRecoveryCode(code));
+  await db.delete(teamRecovery);
+  await db.insert(teamRecovery).values({
+    codeSalt: hashed.salt,
+    codeHash: hashed.hash,
+    createdAt: now(),
+  });
+  return code;
+}
+
+export async function verifyRecoveryCode(code: string): Promise<boolean> {
+  const normalized = normalizeRecoveryCode(code);
+  if (!normalized) return false;
+  const [row] = await db.select().from(teamRecovery).limit(1);
+  if (!row) return false;
+  return verifyPassword(normalized, row.codeSalt, row.codeHash);
+}
+
+export async function destroyUserSessions(userId: number): Promise<void> {
+  await db.delete(teamSessions).where(eq(teamSessions.userId, userId));
+}
+
+export async function setUserPassword(userId: number, password: string): Promise<void> {
+  const hashed = await hashPassword(password);
+  await db
+    .update(teamUsers)
+    .set({
+      passwordSalt: hashed.salt,
+      passwordHash: hashed.hash,
+      updatedAt: now(),
+    })
+    .where(eq(teamUsers.id, userId));
 }

@@ -2,21 +2,26 @@ import type { Config, Context } from "@netlify/functions";
 import { eq } from "drizzle-orm";
 import { db } from "../../db";
 import { teamUsers } from "../../db/schema";
-import { hashPassword } from "../../shared/password";
 import {
   authenticate,
+  countTeamUsers,
   createSession,
   createTeamUser,
   denyIfUnauthorized,
   destroySession,
+  destroyUserSessions,
   findUserByEmail,
   getSessionUser,
+  hasRecoveryCode,
   hasTeamUsers,
   normalizeEmail,
   publicUser,
+  replaceRecoveryCode,
+  setUserPassword,
   validateNewPassword,
+  verifyRecoveryCode,
 } from "./_shared/auth";
-import { error, json, now, readJson } from "./_shared/http";
+import { error, json, readJson } from "./_shared/http";
 
 export default async (req: Request, _context: Context) => {
   const url = new URL(req.url);
@@ -25,7 +30,7 @@ export default async (req: Request, _context: Context) => {
   if (req.method === "GET" && action === "status") {
     const configured = await hasTeamUsers();
     const user = configured ? await getSessionUser(req) : null;
-    return json({ configured, user });
+    return json({ configured, user, hasRecovery: await hasRecoveryCode() });
   }
 
   if (req.method === "GET" && action === "me") {
@@ -48,7 +53,8 @@ export default async (req: Request, _context: Context) => {
     if (pwdErr) return error(pwdErr);
     const user = await createTeamUser({ name, email, password });
     const session = await createSession(user.id);
-    return json({ user, token: session.token }, 201);
+    const recoveryCode = await replaceRecoveryCode();
+    return json({ user, token: session.token, recoveryCode }, 201);
   }
 
   if (req.method === "POST" && action === "login") {
@@ -103,15 +109,64 @@ export default async (req: Request, _context: Context) => {
     if (pwdErr) return error(pwdErr);
     const ok = await authenticate(user.email, current);
     if (!ok) return error("La contraseña actual no es correcta", 401);
-    const hashed = await hashPassword(next);
-    await db
-      .update(teamUsers)
-      .set({
-        passwordSalt: hashed.salt,
-        passwordHash: hashed.hash,
-        updatedAt: now(),
-      })
-      .where(eq(teamUsers.id, user.id));
+    await setUserPassword(user.id, next);
+    return json({ ok: true });
+  }
+
+  if (req.method === "POST" && action === "recovery-code") {
+    const denied = await denyIfUnauthorized(req);
+    if (denied) return denied;
+    const recoveryCode = await replaceRecoveryCode();
+    return json({ recoveryCode });
+  }
+
+  if (req.method === "POST" && action === "recover") {
+    const body = await readJson(req);
+    const email = normalizeEmail(body.email);
+    const code = String(body.code ?? "");
+    const password = String(body.password ?? "");
+    const pwdErr = validateNewPassword(password);
+    if (pwdErr) return error(pwdErr);
+    const row = await findUserByEmail(email);
+    const codeOk = await verifyRecoveryCode(code);
+    if (!row || !codeOk) return error("Email o código incorrectos", 401);
+    await setUserPassword(row.id, password);
+    await destroyUserSessions(row.id);
+    const session = await createSession(row.id);
+    return json({ user: publicUser(row), token: session.token });
+  }
+
+  if ((req.method === "PUT" || req.method === "PATCH") && action === "reset-password") {
+    const denied = await denyIfUnauthorized(req);
+    if (denied) return denied;
+    const actor = await getSessionUser(req);
+    if (!actor) return error("Inicia sesión para continuar", 401);
+    const body = await readJson(req);
+    const userId = Number(body.userId ?? body.user_id);
+    const password = String(body.password ?? "");
+    if (!Number.isInteger(userId) || userId <= 0) return error("Usuario no válido");
+    if (userId === actor.id) return error("Para tu contraseña usa Cambiar mi contraseña");
+    const pwdErr = validateNewPassword(password);
+    if (pwdErr) return error(pwdErr);
+    const [target] = await db.select().from(teamUsers).where(eq(teamUsers.id, userId)).limit(1);
+    if (!target) return error("Usuario no encontrado", 404);
+    await setUserPassword(target.id, password);
+    await destroyUserSessions(target.id);
+    return json({ ok: true });
+  }
+
+  if (req.method === "DELETE" && action === "users") {
+    const denied = await denyIfUnauthorized(req);
+    if (denied) return denied;
+    const actor = await getSessionUser(req);
+    if (!actor) return error("Inicia sesión para continuar", 401);
+    const userId = Number(url.searchParams.get("id"));
+    if (!Number.isInteger(userId) || userId <= 0) return error("Usuario no válido");
+    if (userId === actor.id) return error("No puedes quitarte a ti mismo");
+    if ((await countTeamUsers()) <= 1) return error("Debe quedar al menos una persona con acceso");
+    const [target] = await db.select({ id: teamUsers.id }).from(teamUsers).where(eq(teamUsers.id, userId)).limit(1);
+    if (!target) return error("Usuario no encontrado", 404);
+    await db.delete(teamUsers).where(eq(teamUsers.id, userId));
     return json({ ok: true });
   }
 
@@ -120,5 +175,5 @@ export default async (req: Request, _context: Context) => {
 
 export const config: Config = {
   path: "/api/auth",
-  method: ["GET", "POST", "PUT", "PATCH"],
+  method: ["GET", "POST", "PUT", "PATCH", "DELETE"],
 };

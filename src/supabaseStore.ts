@@ -19,7 +19,7 @@ import {
   paymentsFromQuoteInput,
   sumPayments,
 } from "../shared/quoteLifecycle";
-import { hashPassword, randomToken, sha256Hex, verifyPassword } from "../shared/password";
+import { hashPassword, normalizeRecoveryCode, randomRecoveryCode, randomToken, sha256Hex, verifyPassword } from "../shared/password";
 import type {
   AuthUser,
   Client,
@@ -269,6 +269,28 @@ async function createCloudSession(userId: number): Promise<string> {
   });
   if (error) throw new Error(error.message);
   return token;
+}
+
+async function issueCloudRecovery(): Promise<string> {
+  const code = randomRecoveryCode();
+  const hashed = await hashPassword(normalizeRecoveryCode(code));
+  const sb = getSupabase();
+  const { error: delErr } = await sb.from("team_recovery").delete().gte("id", 0);
+  if (delErr) throw new Error(delErr.message);
+  const { error } = await sb.from("team_recovery").insert({
+    code_salt: hashed.salt,
+    code_hash: hashed.hash,
+  });
+  if (error) throw new Error(error.message);
+  return code;
+}
+
+async function cloudHasRecovery(): Promise<boolean> {
+  const { count, error } = await getSupabase()
+    .from("team_recovery")
+    .select("id", { count: "exact", head: true });
+  if (error) throw new Error(error.message);
+  return (count ?? 0) > 0;
 }
 
 function mapClient(row: ClientRow): Client {
@@ -1244,7 +1266,7 @@ export const cloud = {
     if (error) throw new Error(error.message);
     const configured = (count ?? 0) > 0;
     const user = configured ? await cloudSessionUser() : null;
-    return { configured, user };
+    return { configured, user, hasRecovery: await cloudHasRecovery() };
   },
 
   async authSetup(body: { name: string; email: string; password: string }) {
@@ -1270,7 +1292,8 @@ export const cloud = {
       .single();
     const row = assertOk(data as { id: number; email: string; name: string } | null, error, "No se pudo crear el acceso");
     const token = await createCloudSession(row.id);
-    return { user: toPublicUser(row), token };
+    const recoveryCode = await issueCloudRecovery();
+    return { user: toPublicUser(row), token, recoveryCode };
   },
 
   async authLogin(body: { email: string; password: string }) {
@@ -1344,5 +1367,82 @@ export const cloud = {
       .eq("id", user.id);
     if (error) throw new Error(error.message);
     return { ok: true };
+  },
+
+  async authDeleteUser(id: number) {
+    const me = await cloudSessionUser();
+    if (!me) fail("Inicia sesión para continuar");
+    if (id === me.id) fail("No puedes quitarte a ti mismo");
+    const { count, error: countErr } = await getSupabase()
+      .from("team_users")
+      .select("id", { count: "exact", head: true });
+    if (countErr) throw new Error(countErr.message);
+    if ((count ?? 0) <= 1) fail("Debe quedar al menos una persona con acceso");
+    const { data } = await getSupabase().from("team_users").select("id").eq("id", id).maybeSingle();
+    if (!data) fail("Usuario no encontrado");
+    const { error } = await getSupabase().from("team_users").delete().eq("id", id);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  },
+
+  async authResetUserPassword(body: { userId: number; password: string }) {
+    const me = await cloudSessionUser();
+    if (!me) fail("Inicia sesión para continuar");
+    if (body.userId === me.id) fail("Para tu contraseña usa Cambiar mi contraseña");
+    if (body.password.length < 8) fail("La contraseña debe tener al menos 8 caracteres");
+    const { data } = await getSupabase().from("team_users").select("id").eq("id", body.userId).maybeSingle();
+    if (!data) fail("Usuario no encontrado");
+    const hashed = await hashPassword(body.password);
+    const { error } = await getSupabase()
+      .from("team_users")
+      .update({
+        password_salt: hashed.salt,
+        password_hash: hashed.hash,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", body.userId);
+    if (error) throw new Error(error.message);
+    await getSupabase().from("team_sessions").delete().eq("user_id", body.userId);
+    return { ok: true };
+  },
+
+  async authIssueRecoveryCode() {
+    const me = await cloudSessionUser();
+    const { count } = await getSupabase()
+      .from("team_users")
+      .select("id", { count: "exact", head: true });
+    if ((count ?? 0) > 0 && !me) fail("Inicia sesión para continuar");
+    const recoveryCode = await issueCloudRecovery();
+    return { recoveryCode };
+  },
+
+  async authRecover(body: { email: string; code: string; password: string }) {
+    const email = body.email.trim().toLowerCase();
+    const { data, error } = await getSupabase()
+      .from("team_users")
+      .select("*")
+      .eq("email", email)
+      .maybeSingle();
+    const row = data as TeamUserRow | null;
+    const { data: recoveryRows } = await getSupabase().from("team_recovery").select("*").limit(1);
+    const recovery = (recoveryRows as Array<{ code_salt: string; code_hash: string }> | null)?.[0];
+    const codeOk =
+      recovery &&
+      (await verifyPassword(normalizeRecoveryCode(body.code), recovery.code_salt, recovery.code_hash));
+    if (error || !row || !codeOk) fail("Email o código incorrectos");
+    if (body.password.length < 8) fail("La contraseña debe tener al menos 8 caracteres");
+    const hashed = await hashPassword(body.password);
+    const { error: updErr } = await getSupabase()
+      .from("team_users")
+      .update({
+        password_salt: hashed.salt,
+        password_hash: hashed.hash,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", row.id);
+    if (updErr) throw new Error(updErr.message);
+    await getSupabase().from("team_sessions").delete().eq("user_id", row.id);
+    const token = await createCloudSession(row.id);
+    return { user: toPublicUser(row), token };
   },
 };

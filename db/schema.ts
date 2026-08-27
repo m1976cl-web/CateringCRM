@@ -161,6 +161,13 @@ export const teamSessions = pgTable("team_sessions", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+export const teamRecovery = pgTable("team_recovery", {
+  id: serial().primaryKey(),
+  codeSalt: varchar("code_salt", { length: 64 }).notNull(),
+  codeHash: varchar("code_hash", { length: 128 }).notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 export const shoppingLists = pgTable("shopping_lists", {
   id: serial().primaryKey(),
   eventId: integer("event_id")
