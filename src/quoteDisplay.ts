@@ -3,7 +3,8 @@ import {
   quoteBalance,
   quoteMargin,
 } from "../shared/quoteLifecycle";
-import type { QuoteStatus } from "../shared/types";
+import { isInLocalWeek } from "../shared/eventSeries";
+import type { EventStatus, QuoteStatus } from "../shared/types";
 import { quoteTaxBreakdown, type CompanySettings } from "./settings";
 
 export function quoteMoney(
@@ -30,4 +31,30 @@ export function clientMoneyFromQuotes(
       return { status: q.status, grandTotal: money.total, paid: money.deposit };
     }),
   );
+}
+
+export function collectionsThisWeek<
+  T extends { id: number; eventDate: string; status: EventStatus },
+>(
+  events: T[],
+  quotes: Array<{
+    eventId: number;
+    status: QuoteStatus;
+    total: number;
+    depositAmount?: number | null;
+  }>,
+  now: Date = new Date(),
+) {
+  const items = events
+    .filter((ev) => ev.status !== "cancelado" && isInLocalWeek(ev.eventDate, now))
+    .map((ev) => {
+      const money = clientMoneyFromQuotes(
+        quotes.filter((q) => q.eventId === ev.id),
+      );
+      return { event: ev, ...money };
+    })
+    .filter((row) => row.balance > 0)
+    .sort((a, b) => a.event.eventDate.localeCompare(b.event.eventDate));
+  const total = items.reduce((sum, row) => sum + row.balance, 0);
+  return { total, items };
 }

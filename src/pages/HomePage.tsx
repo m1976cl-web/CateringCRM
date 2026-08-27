@@ -13,7 +13,7 @@ import {
 } from "../api";
 import { PageHeader } from "../components/EmptyState";
 import { QuoteBadge, StatusBadge } from "../components/StatusBadge";
-import { clientMoneyFromQuotes, quoteMoney } from "../quoteDisplay";
+import { clientMoneyFromQuotes, collectionsThisWeek, quoteMoney } from "../quoteDisplay";
 
 export function HomePage() {
   const [data, setData] = useState<Dashboard | null>(null);
@@ -60,6 +60,7 @@ export function HomePage() {
     () => quotes.filter((q) => q.status === "enviada" || q.status === "borrador"),
     [quotes],
   );
+  const weekDue = useMemo(() => collectionsThisWeek(events, quotes), [events, quotes]);
   const zeroStock = useMemo(() => {
     const usesStock = ingredients.some((i) => (i.stockQty ?? 0) > 0);
     if (!usesStock) return [];
@@ -132,7 +133,34 @@ export function HomePage() {
           <strong>{data.counts.pendingShoppingLists}</strong>
           <span>Compras pendientes</span>
         </div>
+        <div className="stat">
+          <strong>{weekDue.items.length ? formatMoney(weekDue.total) : "—"}</strong>
+          <span>Por cobrar esta semana</span>
+        </div>
       </div>
+
+      {weekDue.items.length > 0 ? (
+        <section className="panel" style={{ marginBottom: 16 }}>
+          <h2>Por cobrar esta semana</h2>
+          <p className="meta">
+            Saldo de cotizaciones aceptadas en eventos de lunes a domingo: {formatMoney(weekDue.total)}.
+          </p>
+          <div className="list" style={{ marginTop: 12 }}>
+            {weekDue.items.map((row) => (
+              <Link key={row.event.id} to={`/eventos/${row.event.id}`} className="list-item">
+                <div>
+                  <h3>{row.event.title}</h3>
+                  <div className="meta">
+                    {row.event.clientName} · {formatDate(row.event.eventDate)} · pagado{" "}
+                    {formatMoney(row.paid)} · saldo {formatMoney(row.balance)}
+                  </div>
+                </div>
+                <StatusBadge status={row.event.status} />
+              </Link>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       {todayEvents.length > 0 ? (
         <section className="panel" style={{ marginBottom: 16 }}>
