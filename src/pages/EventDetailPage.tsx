@@ -584,8 +584,8 @@ export function EventDetailPage() {
             label="Se repite"
             hint={
               isNew
-                ? "Crea copias extra con el mismo menú y cliente."
-                : "Opcional: guarda este evento y crea copias a futuro."
+                ? "Crea más fechas con el mismo menú y cliente."
+                : "Opcional: guarda este evento y crea fechas a futuro."
             }
           >
             <select
