@@ -42,6 +42,67 @@ export function fromCanonical(
   return { quantity: roundQty(quantity), unit };
 }
 
+/** Convierte cantidad entre unidades de la misma familia (g/kg, ml/L). Si no son compatibles, null. */
+export function convertQuantity(
+  quantity: number,
+  from: IngredientUnit,
+  to: IngredientUnit,
+): number | null {
+  if (from === to) return roundQty(quantity);
+  const src = toCanonical(quantity, from);
+  const destOne = toCanonical(1, to);
+  if (src.unit !== destOne.unit) return null;
+  return roundQty(src.quantity / destOne.quantity);
+}
+
+/** Resta bodega de lo necesario, ambos en sus propias unidades. */
+export function quantityAfterStock(
+  needQty: number,
+  needUnit: IngredientUnit,
+  stockQty: number,
+  stockUnit: IngredientUnit,
+): number {
+  const stockInNeed = convertQuantity(stockQty, stockUnit, needUnit);
+  if (stockInNeed == null) return roundQty(needQty);
+  return roundQty(Math.max(0, needQty - stockInNeed));
+}
+
+/** Ajusta bodega (unidad de catálogo) al marcar o desmarcar un ítem comprado. */
+export function applyPurchaseToStock(
+  currentStock: number,
+  catalogUnit: IngredientUnit,
+  lineQty: number,
+  lineUnit: IngredientUnit,
+  wasPurchased: boolean,
+  nowPurchased: boolean,
+): number {
+  if (wasPurchased === nowPurchased) return roundQty(currentStock);
+  const delta = convertQuantity(lineQty, lineUnit, catalogUnit);
+  if (delta == null) return roundQty(currentStock);
+  if (nowPurchased) return roundQty(currentStock + delta);
+  return roundQty(Math.max(0, currentStock - delta));
+}
+
+export function scaleRecipeLines(
+  yieldPortions: number,
+  portions: number,
+  ingredients: Array<{ name: string; unit: IngredientUnit; quantity: number }>,
+): Array<{ name: string; quantity: number; unit: IngredientUnit }> {
+  const scale = portions / Math.max(yieldPortions, 1);
+  const map = new Map<string, { name: string; quantity: number; unit: IngredientUnit }>();
+  for (const ing of ingredients) {
+    const canon = toCanonical(ing.quantity * scale, ing.unit);
+    const key = `${ing.name}:${canon.unit}`;
+    const existing = map.get(key);
+    if (existing) existing.quantity += canon.quantity;
+    else map.set(key, { name: ing.name, quantity: canon.quantity, unit: canon.unit });
+  }
+  return [...map.values()].map((line) => {
+    const pretty = fromCanonical(line.quantity, line.unit);
+    return { name: line.name, quantity: pretty.quantity, unit: pretty.unit };
+  });
+}
+
 /** Scale + merge with unit normalization (g/kg, ml/L). */
 export function buildShoppingLinesNormalized(recipes: RecipeForShopping[]): ShoppingLine[] {
   const map = new Map<string, ShoppingLine>();
