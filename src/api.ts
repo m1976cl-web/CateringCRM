@@ -119,6 +119,7 @@ export type QuoteSummary = {
   total: number;
   notes: string | null;
   status: QuoteStatus;
+  depositAmount: number;
   eventTitle: string;
   clientName: string;
   createdAt: string;

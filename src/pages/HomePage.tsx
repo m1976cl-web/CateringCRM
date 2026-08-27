@@ -15,6 +15,7 @@ import {
 import { PageHeader } from "../components/EmptyState";
 import { QuoteBadge, StatusBadge } from "../components/StatusBadge";
 import { quoteTaxBreakdown } from "../settings";
+import { quoteBalance } from "../../shared/quoteLifecycle";
 
 export function HomePage() {
   const [data, setData] = useState<Dashboard | null>(null);
@@ -260,6 +261,7 @@ export function HomePage() {
             <div className="list" style={{ marginTop: 12 }}>
               {pendingQuotes.slice(0, 5).map((q) => {
                 const tax = quoteTaxBreakdown(q.total);
+                const money = quoteBalance(tax.total, q.depositAmount ?? 0);
                 return (
                   <Link key={q.id} to="/cotizaciones" className="list-item">
                     <div>
@@ -268,6 +270,7 @@ export function HomePage() {
                       </h3>
                       <div className="meta">
                         {q.clientName} · {q.eventTitle}
+                        {money.deposit > 0 ? ` · saldo ${formatMoney(money.balance)}` : ""}
                       </div>
                     </div>
                     <QuoteBadge status={q.status} />

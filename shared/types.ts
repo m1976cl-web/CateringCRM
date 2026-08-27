@@ -123,6 +123,7 @@ export type QuoteInput = {
   items: QuoteItem[];
   notes?: string | null;
   status: QuoteStatus;
+  depositAmount?: number;
 };
 
 export type ShoppingLine = {
