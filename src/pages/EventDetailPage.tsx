@@ -15,12 +15,19 @@ import { PageHeader } from "../components/EmptyState";
 import { QuoteBadge } from "../components/StatusBadge";
 import { recipeFitsService } from "../../shared/recipeMeta";
 import { estimateFoodCost } from "../../shared/shopping";
+import {
+  REPEAT_INTERVALS,
+  REPEAT_INTERVAL_LABELS,
+  shiftEventDate,
+  type RepeatInterval,
+} from "../../shared/eventSeries";
 import { clientMoneyFromQuotes, quoteMoney } from "../quoteDisplay";
 import {
   EVENT_STATUSES,
   EVENT_STATUS_LABELS,
   SERVICE_TYPES,
   SERVICE_TYPE_LABELS,
+  type EventInput,
   type EventStatus,
   type ServiceType,
 } from "../../shared/types";
@@ -65,6 +72,11 @@ export function EventDetailPage() {
   const [loading, setLoading] = useState(!isNew || Boolean(searchParams.get("duplicar")));
   const [saving, setSaving] = useState(false);
   const [askDelete, setAskDelete] = useState(false);
+  const [askUnpaid, setAskUnpaid] = useState(false);
+  const [pendingAction, setPendingAction] = useState<"save" | "shopping" | "series" | null>(null);
+  const [savedStatus, setSavedStatus] = useState<EventStatus>("borrador");
+  const [repeatKind, setRepeatKind] = useState<RepeatInterval | "">("");
+  const [repeatExtra, setRepeatExtra] = useState(3);
   const [eventQuotes, setEventQuotes] = useState<QuoteSummary[]>([]);
 
   const fechaParam = searchParams.get("fecha");
@@ -129,6 +141,7 @@ export function EventDetailPage() {
           setLocation(ev.location ?? "");
           setAttendees(ev.attendees);
           setStatus(ev.status);
+          setSavedStatus(ev.status);
           setServices(ev.services);
           setDietary(ev.dietaryRestrictions ?? "");
           setNotes(ev.notes ?? "");
@@ -270,54 +283,90 @@ export function EventDetailPage() {
     };
   }
 
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  function needsUnpaidWarning() {
+    return status === "realizado" && savedStatus !== "realizado" && quoteMoneyTotals.balance > 0;
+  }
+
+  async function createSeriesCopies(payload: EventInput) {
+    if (!repeatKind || repeatExtra < 1) return 0;
+    const extra = Math.min(24, Math.floor(repeatExtra));
+    for (let i = 1; i <= extra; i += 1) {
+      await api.createEvent({
+        ...payload,
+        status: "borrador",
+        eventDate: shiftEventDate(payload.eventDate, repeatKind, i),
+      });
+    }
+    return extra;
+  }
+
+  async function persistEvent(action: "save" | "shopping" | "series", skipWarn = false) {
+    if (action === "shopping") {
+      if (services.length === 0) {
+        setError("Elige al menos un servicio (desayuno, almuerzo…)");
+        return;
+      }
+      if (menu.length === 0) {
+        setError("Agrega recetas al menú antes de generar la lista de compras");
+        return;
+      }
+    }
+    if (action === "series") {
+      if (!repeatKind || repeatExtra < 1) {
+        setError("Elige cada cuánto se repite y cuántas copias extra.");
+        return;
+      }
+    }
+    if (!skipWarn && needsUnpaidWarning()) {
+      setPendingAction(action);
+      setAskUnpaid(true);
+      return;
+    }
     setSaving(true);
     setError("");
     try {
       const payload = buildPayload();
       if (isNew) {
         const created = await api.createEvent(payload);
-        navigate(`/eventos/${created.id}`);
-      } else if (eventId) {
-        await api.updateEvent(eventId, payload);
-        navigate(`/eventos/${eventId}`);
+        const extra = action === "shopping" ? 0 : await createSeriesCopies(payload);
+        if (action === "shopping") {
+          await api.getShoppingList(created.id, true);
+          navigate(`/compras/${created.id}`);
+          return;
+        }
+        navigate(extra > 0 ? "/eventos" : `/eventos/${created.id}`);
+        return;
       }
+      if (!eventId) throw new Error("No se pudo guardar el evento");
+      await api.updateEvent(eventId, payload);
+      setSavedStatus(payload.status);
+      if (action === "series") {
+        const extra = await createSeriesCopies(payload);
+        navigate(extra > 0 ? "/eventos" : `/eventos/${eventId}`);
+        return;
+      }
+      if (action === "shopping") {
+        await api.getShoppingList(eventId, true);
+        navigate(`/compras/${eventId}`);
+        return;
+      }
+      navigate(`/eventos/${eventId}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo guardar");
     } finally {
       setSaving(false);
+      setAskUnpaid(false);
+      setPendingAction(null);
     }
   }
 
+  async function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    await persistEvent("save");
+  }
+
   async function saveAndGenerateShopping() {
-    if (services.length === 0) {
-      setError("Elige al menos un servicio (desayuno, almuerzo…)");
-      return;
-    }
-    if (menu.length === 0) {
-      setError("Agrega recetas al menú antes de generar la lista de compras");
-      return;
-    }
-    setSaving(true);
-    setError("");
-    try {
-      const payload = buildPayload();
-      let id = eventId;
-      if (isNew) {
-        const created = await api.createEvent(payload);
-        id = created.id;
-      } else if (eventId) {
-        await api.updateEvent(eventId, payload);
-      }
-      if (!id) throw new Error("No se pudo guardar el evento");
-      await api.getShoppingList(id, true);
-      navigate(`/compras/${id}`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "No se pudo generar la lista");
-    } finally {
-      setSaving(false);
-    }
+    await persistEvent("shopping");
   }
 
   async function onDelete() {
@@ -529,6 +578,40 @@ export function EventDetailPage() {
         <FormField label="Lugar">
           <input value={location} onChange={(e) => setLocation(e.target.value)} />
         </FormField>
+
+        <div className="grid-2">
+          <FormField
+            label="Se repite"
+            hint={
+              isNew
+                ? "Crea copias extra con el mismo menú y cliente."
+                : "Opcional: guarda este evento y crea copias a futuro."
+            }
+          >
+            <select
+              value={repeatKind}
+              onChange={(e) => setRepeatKind((e.target.value || "") as RepeatInterval | "")}
+            >
+              <option value="">No se repite</option>
+              {REPEAT_INTERVALS.map((kind) => (
+                <option key={kind} value={kind}>
+                  {REPEAT_INTERVAL_LABELS[kind]}
+                </option>
+              ))}
+            </select>
+          </FormField>
+          {repeatKind ? (
+            <FormField label="Copias extra" hint="Además de este evento. Máximo 24.">
+              <input
+                type="number"
+                min={1}
+                max={24}
+                value={repeatExtra}
+                onChange={(e) => setRepeatExtra(Math.max(1, Number(e.target.value) || 1))}
+              />
+            </FormField>
+          ) : null}
+        </div>
 
         <div>
           <div className="field-label" style={{ marginBottom: 8 }}>
@@ -748,7 +831,11 @@ export function EventDetailPage() {
 
         <div className="form-actions">
           <button className="btn primary" type="submit" disabled={saving}>
-            {saving ? "Guardando…" : "Guardar evento"}
+            {saving
+              ? "Guardando…"
+              : isNew && repeatKind
+                ? "Guardar serie"
+                : "Guardar evento"}
           </button>
           <button
             type="button"
@@ -766,6 +853,16 @@ export function EventDetailPage() {
               Duplicar para otra fecha
             </Link>
           ) : null}
+          {!isNew && repeatKind ? (
+            <button
+              type="button"
+              className="btn"
+              disabled={saving}
+              onClick={() => void persistEvent("series")}
+            >
+              {saving ? "Creando…" : "Crear serie a futuro"}
+            </button>
+          ) : null}
           {!isNew ? (
             <button type="button" className="btn danger" onClick={() => setAskDelete(true)}>
               Eliminar
@@ -780,6 +877,21 @@ export function EventDetailPage() {
         message="Se borrarán también sus cotizaciones y listas de compras."
         onCancel={() => setAskDelete(false)}
         onConfirm={() => void onDelete()}
+      />
+      <ConfirmDialog
+        open={askUnpaid}
+        title="Hay saldo por cobrar"
+        message={`Hay ${formatMoney(quoteMoneyTotals.balance)} pendiente en cotizaciones aceptadas. ¿Marcar el evento como realizado de todas formas?`}
+        confirmLabel="Marcar realizado igual"
+        danger={false}
+        onCancel={() => {
+          setAskUnpaid(false);
+          setPendingAction(null);
+        }}
+        onConfirm={() => {
+          const action = pendingAction ?? "save";
+          void persistEvent(action, true);
+        }}
       />
     </div>
   );

@@ -3,6 +3,7 @@ export function ConfirmDialog({
   title,
   message,
   confirmLabel = "Eliminar",
+  danger = true,
   onConfirm,
   onCancel,
 }: {
@@ -10,6 +11,7 @@ export function ConfirmDialog({
   title: string;
   message: string;
   confirmLabel?: string;
+  danger?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
@@ -29,7 +31,7 @@ export function ConfirmDialog({
           <button type="button" className="btn ghost" onClick={onCancel}>
             Cancelar
           </button>
-          <button type="button" className="btn danger" onClick={onConfirm}>
+          <button type="button" className={danger ? "btn danger" : "btn primary"} onClick={onConfirm}>
             {confirmLabel}
           </button>
         </div>
