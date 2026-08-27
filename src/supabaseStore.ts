@@ -14,6 +14,7 @@ import {
   type ShoppingListStatus,
   type SupplierInput,
 } from "../shared/types";
+import { eventStatusAfterQuote, normalizeDeposit } from "../shared/quoteLifecycle";
 import type {
   Client,
   Dashboard,
@@ -104,6 +105,7 @@ type QuoteRow = {
   total: number;
   notes: string | null;
   status: QuoteStatus;
+  deposit_amount?: number | null;
   created_at: string;
   updated_at: string;
 };
@@ -136,6 +138,24 @@ function assertOk<T>(data: T | null, error: { message: string } | null, fallback
 
 function iso(value: string | Date): string {
   return typeof value === "string" ? value : value.toISOString();
+}
+
+async function syncEventFromQuote(eventId: number, quoteStatus: QuoteStatus) {
+  const db = getSupabase();
+  const { data, error } = await db
+    .from("events")
+    .select("id, status")
+    .eq("id", eventId)
+    .maybeSingle();
+  const ev = data as { id: number; status: EventStatus } | null;
+  if (error || !ev) return;
+  const next = eventStatusAfterQuote(ev.status, quoteStatus);
+  if (next === ev.status) return;
+  const { error: upd } = await db
+    .from("events")
+    .update({ status: next, updated_at: new Date().toISOString() })
+    .eq("id", ev.id);
+  if (upd) throw new Error(upd.message);
 }
 
 function mapClient(row: ClientRow): Client {
@@ -999,6 +1019,7 @@ export const cloud = {
         total: q.total,
         notes: q.notes,
         status: q.status,
+        depositAmount: q.deposit_amount ?? 0,
         eventTitle: ev?.title ?? "—",
         clientName: ev ? (clientName.get(ev.client_id) ?? "—") : "—",
         clientPhone: ev ? (clientPhone.get(ev.client_id) ?? null) : null,
@@ -1027,6 +1048,7 @@ export const cloud = {
       total: q.total,
       notes: q.notes,
       status: q.status,
+      depositAmount: q.deposit_amount ?? 0,
       eventTitle: event?.title ?? "—",
       clientName: c?.name ?? "—",
       createdAt: iso(q.created_at),
@@ -1055,10 +1077,12 @@ export const cloud = {
         total: quoteTotal(body.items),
         notes: body.notes ?? null,
         status: body.status,
+        deposit_amount: normalizeDeposit(body.depositAmount),
       })
       .select("*")
       .single();
     const row = assertOk(data as QuoteRow | null, error, "No se pudo crear la cotización");
+    await syncEventFromQuote(body.eventId, body.status);
     return cloud.getQuote(row.id);
   },
 
@@ -1073,12 +1097,14 @@ export const cloud = {
         total: quoteTotal(body.items),
         notes: body.notes ?? null,
         status: body.status,
+        deposit_amount: normalizeDeposit(body.depositAmount),
         updated_at: new Date().toISOString(),
       })
       .eq("id", id)
       .select("*")
       .single();
     assertOk(data as QuoteRow | null, error, "Cotización no encontrada");
+    await syncEventFromQuote(body.eventId, body.status);
     return cloud.getQuote(id);
   },
 

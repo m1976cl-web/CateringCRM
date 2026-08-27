@@ -6,11 +6,13 @@ import {
   type IngredientInput,
   type IngredientUnit,
   type QuoteInput,
+  type QuoteStatus,
   type RecipeInput,
   type ServiceType,
   type ShoppingListStatus,
   type SupplierInput,
 } from "../shared/types";
+import { eventStatusAfterQuote, normalizeDeposit } from "../shared/quoteLifecycle";
 import type {
   Client,
   Dashboard,
@@ -60,6 +62,7 @@ type Store = {
     total: number;
     notes: string | null;
     status: QuoteDetail["status"];
+    depositAmount: number;
     createdAt: string;
     updatedAt: string;
   }>;
@@ -165,6 +168,7 @@ function quoteSummary(store: Store, q: Store["quotes"][number]): QuoteSummary {
     total: q.total,
     notes: q.notes,
     status: q.status,
+    depositAmount: q.depositAmount ?? 0,
     eventTitle: ev?.title ?? "—",
     clientName: client?.name ?? "—",
     clientPhone: client?.phone ?? null,
@@ -185,6 +189,15 @@ function quoteDetail(store: Store, q: Store["quotes"][number]): QuoteDetail {
     clientCompany: client?.company ?? null,
     updatedAt: q.updatedAt,
   };
+}
+
+function syncEventStatusFromQuote(store: Store, eventId: number, quoteStatus: QuoteStatus) {
+  const ev = store.events.find((e) => e.id === eventId);
+  if (!ev) return;
+  const next = eventStatusAfterQuote(ev.status, quoteStatus);
+  if (next === ev.status) return;
+  ev.status = next;
+  ev.updatedAt = nowIso();
 }
 
 function fail(message: string): never {
@@ -685,10 +698,12 @@ export const local = {
       total: quoteTotal(body.items),
       notes: body.notes ?? null,
       status: body.status,
+      depositAmount: normalizeDeposit(body.depositAmount),
       createdAt: nowIso(),
       updatedAt: nowIso(),
     };
     store.quotes.push(row);
+    syncEventStatusFromQuote(store, body.eventId, body.status);
     write(store);
     return quoteDetail(store, row);
   },
@@ -705,8 +720,10 @@ export const local = {
       total: quoteTotal(body.items),
       notes: body.notes ?? null,
       status: body.status,
+      depositAmount: normalizeDeposit(body.depositAmount),
       updatedAt: nowIso(),
     };
+    syncEventStatusFromQuote(store, body.eventId, body.status);
     write(store);
     return quoteDetail(store, store.quotes[idx]);
   },
