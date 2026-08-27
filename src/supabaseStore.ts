@@ -1,4 +1,4 @@
-import { buildShoppingLines, roundQty } from "../shared/shopping";
+import { applyPurchaseToStock, buildShoppingLines, quantityAfterStock } from "../shared/shopping";
 import {
   quoteTotal,
   type ClientInput,
@@ -808,7 +808,7 @@ export const cloud = {
     }
 
     const detail = await loadEventDetail(eventId);
-    const stockById = new Map<number, number>();
+    const stockById = new Map<number, { qty: number; unit: IngredientUnit }>();
     const recipesForShopping = await Promise.all(
       detail.recipes.map(async (er) => {
         const recipe = await loadRecipe(er.recipeId);
@@ -829,7 +829,7 @@ export const cloud = {
         const supplierName = new Map((suppliers ?? []).map((s) => [s.id, s.name]));
         const byId = new Map(((ings as IngredientRow[] | null) ?? []).map((i) => [i.id, i]));
         for (const [id, row] of byId) {
-          stockById.set(id, row.stock_qty ?? 0);
+          stockById.set(id, { qty: row.stock_qty ?? 0, unit: row.unit });
         }
 
         return {
@@ -855,8 +855,16 @@ export const cloud = {
 
     const lines = buildShoppingLines(recipesForShopping)
       .map((l) => {
-        const stock = stockById.get(l.ingredientId) ?? 0;
-        return { ...l, quantity: roundQty(Math.max(0, l.quantity - stock)) };
+        const stock = stockById.get(l.ingredientId);
+        return {
+          ...l,
+          quantity: quantityAfterStock(
+            l.quantity,
+            l.unit,
+            stock?.qty ?? 0,
+            stock?.unit ?? l.unit,
+          ),
+        };
       })
       .filter((l) => l.quantity > 0);
 
@@ -911,7 +919,32 @@ export const cloud = {
       if (stErr) throw new Error(stErr.message);
     }
     if (body.items) {
+      const currentList = await loadShoppingList(row);
       for (const patch of body.items) {
+        const current = currentList.items.find((i) => i.id === patch.id);
+        if (current && current.purchased !== patch.purchased) {
+          const cat = await db
+            .from("ingredients")
+            .select("id, unit, stock_qty")
+            .eq("id", current.ingredientId)
+            .maybeSingle();
+          const ing = cat.data as Pick<IngredientRow, "id" | "unit" | "stock_qty"> | null;
+          if (ing) {
+            const nextStock = applyPurchaseToStock(
+              ing.stock_qty ?? 0,
+              ing.unit,
+              current.quantity,
+              current.unit,
+              current.purchased,
+              patch.purchased,
+            );
+            const { error: stockErr } = await db
+              .from("ingredients")
+              .update({ stock_qty: nextStock })
+              .eq("id", ing.id);
+            if (stockErr) throw new Error(stockErr.message);
+          }
+        }
         const { error: pErr } = await db
           .from("shopping_list_items")
           .update({ purchased: patch.purchased })
@@ -950,9 +983,10 @@ export const cloud = {
     );
     const clientIds = [...new Set([...eventMap.values()].map((e) => e.client_id))];
     const { data: clients } = clientIds.length
-      ? await db.from("clients").select("id, name").in("id", clientIds)
-      : { data: [] as Array<{ id: number; name: string }> };
+      ? await db.from("clients").select("id, name, phone").in("id", clientIds)
+      : { data: [] as Array<{ id: number; name: string; phone: string | null }> };
     const clientName = new Map((clients ?? []).map((c) => [c.id, c.name]));
+    const clientPhone = new Map((clients ?? []).map((c) => [c.id, c.phone ?? null]));
 
     return rows.map((q) => {
       const ev = eventMap.get(q.event_id);
@@ -967,6 +1001,7 @@ export const cloud = {
         status: q.status,
         eventTitle: ev?.title ?? "—",
         clientName: ev ? (clientName.get(ev.client_id) ?? "—") : "—",
+        clientPhone: ev ? (clientPhone.get(ev.client_id) ?? null) : null,
         createdAt: iso(q.created_at),
       };
     });

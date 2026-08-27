@@ -21,6 +21,7 @@ export default async (req: Request, _context: Context) => {
         createdAt: quotes.createdAt,
         eventTitle: events.title,
         clientName: clients.name,
+        clientPhone: clients.phone,
       })
       .from(quotes)
       .innerJoin(events, eq(quotes.eventId, events.id))
