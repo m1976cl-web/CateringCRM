@@ -21,6 +21,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [configured, setConfigured] = useState(false);
   const [hasRecovery, setHasRecovery] = useState(false);
+  const [demoAvailable, setDemoAvailable] = useState(false);
   const [ready, setReady] = useState(false);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -35,6 +36,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     const status = await api.authStatus();
     setConfigured(status.configured);
     setHasRecovery(status.hasRecovery);
+    setDemoAvailable(status.demoAvailable);
     setUser(status.user);
   }
 
@@ -114,6 +116,23 @@ export function AuthGate({ children }: { children: ReactNode }) {
     }
   }
 
+  async function onDemo() {
+    setSaving(true);
+    setError("");
+    try {
+      const res = await api.authDemoLogin();
+      setSessionToken(res.token);
+      setUser(res.user);
+      setConfigured(true);
+      setPassword("");
+      setRecover(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo entrar a la prueba");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   if (!ready) return <div className="loading">Cargando…</div>;
 
   if (user && recoveryCode) {
@@ -152,13 +171,29 @@ export function AuthGate({ children }: { children: ReactNode }) {
         <h1>CateringCRM</h1>
         <p className="meta">
           {!configured
-            ? "Crea el primer acceso. Después la app pedirá login para leer y escribir datos."
+            ? "Crea el primer acceso o entra a probar la plataforma sin contraseña."
             : recover
               ? hasRecovery
                 ? "Usa el email de la cuenta y el código de recuperación del equipo."
                 : "Aún no hay código de recuperación. Pide a alguien del equipo que genere uno en Ajustes."
-              : "Entra con el email y la contraseña del equipo."}
+              : "Entra con el email y la contraseña del equipo, o prueba sin clave."}
         </p>
+        {demoAvailable && !recover ? (
+          <>
+            <button
+              type="button"
+              className="btn primary"
+              style={{ width: "100%" }}
+              disabled={saving}
+              onClick={() => void onDemo()}
+            >
+              {saving ? "…" : "Probar sin contraseña"}
+            </button>
+            <p className="meta" style={{ textAlign: "center", margin: "4px 0 8px" }}>
+              o {configured ? "entra con tu cuenta" : "crea el acceso del equipo"}
+            </p>
+          </>
+        ) : null}
         {!configured ? (
           <FormField label="Nombre">
             <input
@@ -200,7 +235,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
           />
         </FormField>
         {error ? <p className="error-inline">{error}</p> : null}
-        <button type="submit" className="btn primary" style={{ width: "100%", marginTop: 12 }} disabled={saving}>
+        <button type="submit" className="btn" style={{ width: "100%", marginTop: 12 }} disabled={saving}>
           {saving ? "…" : !configured ? "Crear acceso" : recover ? "Restablecer y entrar" : "Entrar"}
         </button>
         {configured ? (

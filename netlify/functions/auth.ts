@@ -14,6 +14,8 @@ import {
   getSessionUser,
   hasRecoveryCode,
   hasTeamUsers,
+  isDemoLoginEnabled,
+  loginDemo,
   normalizeEmail,
   publicUser,
   replaceRecoveryCode,
@@ -30,7 +32,7 @@ export default async (req: Request, _context: Context) => {
   if (req.method === "GET" && action === "status") {
     const configured = await hasTeamUsers();
     const user = configured ? await getSessionUser(req) : null;
-    return json({ configured, user, hasRecovery: await hasRecoveryCode() });
+    return json({ configured, user, hasRecovery: await hasRecoveryCode(), demoAvailable: isDemoLoginEnabled() });
   }
 
   if (req.method === "GET" && action === "me") {
@@ -65,6 +67,12 @@ export default async (req: Request, _context: Context) => {
     if (!user) return error("Email o contraseña incorrectos", 401);
     const session = await createSession(user.id);
     return json({ user, token: session.token });
+  }
+
+  if (req.method === "POST" && action === "demo") {
+    if (!isDemoLoginEnabled()) return error("El acceso de prueba está desactivado", 403);
+    const demo = await loginDemo();
+    return json(demo);
   }
 
   if (req.method === "POST" && action === "logout") {

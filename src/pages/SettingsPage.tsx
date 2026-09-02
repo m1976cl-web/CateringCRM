@@ -5,6 +5,7 @@ import { useAuth } from "../components/AuthGate";
 import { PageHeader } from "../components/EmptyState";
 import { FormField } from "../components/FormField";
 import { loadCompanySettings, saveCompanySettings, type CompanySettings } from "../settings";
+import { isDemoUserEmail } from "../../shared/demoLogin";
 
 export function SettingsPage() {
   const mode = getDataMode();
@@ -272,7 +273,10 @@ export function SettingsPage() {
             Sesión de {user.name} ({user.email}). En modo servidor, las APIs rechazan peticiones sin
             login. En Supabase, las tablas del CRM y el acceso del equipo exigen esa sesión (RLS);
             la clave anónima ya no alcanza para leer datos. En modo local el login solo cierra la
-            app de este dispositivo.
+            app de este dispositivo. El login incluye “Probar sin contraseña” (usuario{" "}
+            <code>demo@cateringcrm.app</code>). Para datos reales, crea cuentas aquí y desactívalo
+            con <code>DEMO_LOGIN=false</code> en Netlify o <code>VITE_DEMO_LOGIN=false</code> en
+            Pages. En Supabase hay que ejecutar también <code>007_demo_login.sql</code>.
           </p>
           {users.length ? (
             <ul className="checklist">
@@ -281,6 +285,7 @@ export function SettingsPage() {
                   <span>
                     {u.name} · {u.email}
                     {u.id === user.id ? " (tú)" : ""}
+                    {isDemoUserEmail(u.email) ? " · acceso de prueba" : ""}
                   </span>
                   {u.id !== user.id ? (
                     <span className="page-actions">
