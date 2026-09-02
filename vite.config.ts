@@ -1,7 +1,21 @@
-import { defineConfig, loadEnv } from "vite";
+import { defineConfig, loadEnv, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import netlify from "@netlify/vite-plugin";
 import { VitePWA } from "vite-plugin-pwa";
+
+/** Quita el redirect a /app/ del HTML de producción (Netlify o artifact de Actions). */
+function stripGithubPagesRedirect(): Plugin {
+  return {
+    name: "strip-github-pages-redirect",
+    apply: "build",
+    transformIndexHtml(html) {
+      return html.replace(
+        /<!--github-pages-redirect-->[\s\S]*?<!--\/github-pages-redirect-->\n?/,
+        "",
+      );
+    },
+  };
+}
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
@@ -12,6 +26,7 @@ export default defineConfig(({ mode }) => {
     base,
     plugins: [
       react(),
+      stripGithubPagesRedirect(),
       ...(staticOnly ? [] : [netlify()]),
       VitePWA({
         registerType: "autoUpdate",

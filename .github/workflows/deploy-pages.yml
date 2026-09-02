@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -30,7 +30,7 @@ jobs:
       - name: Build static app
         env:
           VITE_STATIC_ONLY: "true"
-          VITE_BASE: /${{ github.event.repository.name }}/
+          VITE_BASE: "./"
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
           VITE_DEMO_LOGIN: ${{ secrets.VITE_DEMO_LOGIN }}
@@ -43,6 +43,26 @@ jobs:
         with:
           path: dist
 
+      # Pages del repo está en modo “Deploy from a branch” (main /), no GitHub Actions.
+      # Publicamos el build en /app/ para que la URL viva sirva la SPA compilada.
+      - name: Publish static app/ on main
+        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        run: |
+          git fetch origin main
+          git checkout -B main origin/main
+          rm -rf app
+          mkdir app
+          cp -a dist/. app/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A app
+          if git diff --staged --quiet; then
+            echo "app/ sin cambios"
+            exit 0
+          fi
+          git commit -m "chore: update GitHub Pages static app [skip ci]"
+          git push origin main
+
   deploy:
     needs: build
     runs-on: ubuntu-latest
@@ -52,3 +72,4 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+        continue-on-error: true
