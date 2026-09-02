@@ -1,7 +1,7 @@
 import type { Config, Context } from "@netlify/functions";
 import { eq } from "drizzle-orm";
 import { db } from "../../db";
-import { ingredients } from "../../db/schema";
+import { ingredientPrices, ingredients } from "../../db/schema";
 import { isIngredientUnit } from "../../shared/types";
 import { asNumber, error, json, now, parseId, readJson } from "./_shared/http";
 import { denyIfUnauthorized } from "./_shared/auth";
@@ -16,7 +16,18 @@ export default async (req: Request, context: Context) => {
   if (req.method === "GET") {
     const [row] = await db.select().from(ingredients).where(eq(ingredients.id, id)).limit(1);
     if (!row) return error("Ingrediente no encontrado", 404);
-    return json(row);
+    const history = await db
+      .select()
+      .from(ingredientPrices)
+      .where(eq(ingredientPrices.ingredientId, id));
+    return json({
+      ...row,
+      priceHistory: history.map((h) => ({
+        id: h.id,
+        unitPrice: h.unitPrice,
+        recordedAt: h.recordedAt,
+      })),
+    });
   }
 
   if (req.method === "PUT" || req.method === "PATCH") {
@@ -30,16 +41,20 @@ export default async (req: Request, context: Context) => {
         ? null
         : asNumber(body.supplierId, 0) || null;
 
+    const [current] = await db.select().from(ingredients).where(eq(ingredients.id, id)).limit(1);
+    if (!current) return error("Ingrediente no encontrado", 404);
+    const nextPrice =
+      body.unitPrice === null || body.unitPrice === undefined || body.unitPrice === ""
+        ? null
+        : asNumber(body.unitPrice);
+
     const [updated] = await db
       .update(ingredients)
       .set({
         name,
         unit: body.unit,
         supplierId,
-        unitPrice:
-          body.unitPrice === null || body.unitPrice === undefined || body.unitPrice === ""
-            ? null
-            : asNumber(body.unitPrice),
+        unitPrice: nextPrice,
         stockQty: asNumber(body.stockQty, 0),
         updatedAt: now(),
       })
@@ -47,7 +62,25 @@ export default async (req: Request, context: Context) => {
       .returning();
 
     if (!updated) return error("Ingrediente no encontrado", 404);
-    return json(updated);
+    if (nextPrice != null && nextPrice !== (current.unitPrice ?? null)) {
+      await db.insert(ingredientPrices).values({
+        ingredientId: id,
+        unitPrice: nextPrice,
+        recordedAt: now(),
+      });
+    }
+    const history = await db
+      .select()
+      .from(ingredientPrices)
+      .where(eq(ingredientPrices.ingredientId, id));
+    return json({
+      ...updated,
+      priceHistory: history.map((h) => ({
+        id: h.id,
+        unitPrice: h.unitPrice,
+        recordedAt: h.recordedAt,
+      })),
+    });
   }
 
   if (req.method === "DELETE") {

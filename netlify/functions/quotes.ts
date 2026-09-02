@@ -2,13 +2,14 @@ import type { Config, Context } from "@netlify/functions";
 import { desc, eq } from "drizzle-orm";
 import { db } from "../../db";
 import { clients, events, quotes } from "../../db/schema";
-import { isQuoteStatus, quoteTotal } from "../../shared/types";
+import { randomToken } from "../../shared/password";
 import { denyIfUnauthorized } from "./_shared/auth";
 import { asNumber, asOptionalString, error, json, now, readJson } from "./_shared/http";
 import { parseItems } from "./_shared/quotes";
 import { syncEventFromQuote } from "./_shared/quoteLifecycle";
 import { paymentsByQuoteIds, replaceQuotePayments } from "./_shared/quotePayments";
 import { sumPayments } from "../../shared/quoteLifecycle";
+import { isQuoteStatus, quoteTotal } from "../../shared/types";
 
 export default async (req: Request, _context: Context) => {
   const denied = await denyIfUnauthorized(req);
@@ -27,6 +28,11 @@ export default async (req: Request, _context: Context) => {
         status: quotes.status,
         depositAmount: quotes.depositAmount,
         foodCost: quotes.foodCost,
+        version: quotes.version,
+        parentQuoteId: quotes.parentQuoteId,
+        publicToken: quotes.publicToken,
+        dueDate: quotes.dueDate,
+        lastContactedAt: quotes.lastContactedAt,
         createdAt: quotes.createdAt,
         eventTitle: events.title,
         clientName: clients.name,
@@ -57,6 +63,9 @@ export default async (req: Request, _context: Context) => {
   const quoteDate = body.quoteDate ? new Date(String(body.quoteDate)) : now();
   if (Number.isNaN(quoteDate.getTime())) return error("Fecha inválida");
 
+  const [eventRow] = await db.select({ eventDate: events.eventDate }).from(events).where(eq(events.id, eventId)).limit(1);
+  const dueDate = body.dueDate ? new Date(String(body.dueDate)) : eventRow?.eventDate ?? null;
+
   const [created] = await db
     .insert(quotes)
     .values({
@@ -69,6 +78,9 @@ export default async (req: Request, _context: Context) => {
       status: body.status,
       depositAmount: 0,
       foodCost: Math.max(0, asNumber(body.foodCost, 0)),
+      version: 1,
+      publicToken: randomToken().slice(0, 32),
+      dueDate: dueDate && !Number.isNaN(dueDate.getTime()) ? dueDate : null,
       createdAt: now(),
       updatedAt: now(),
     })

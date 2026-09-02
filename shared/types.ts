@@ -1,3 +1,5 @@
+import type { DietaryTag, EventExpense, EventStaff, PackingItem } from "./ops";
+
 export const EVENT_STATUSES = [
   "borrador",
   "cotizado",
@@ -111,6 +113,8 @@ export type RecipeInput = {
   suitableServices?: ServiceType[];
   instructions?: string | null;
   estimatedCost?: number | null;
+  imageUrl?: string | null;
+  allergenTags?: string[];
   ingredients: RecipeIngredientInput[];
 };
 
@@ -128,8 +132,17 @@ export type EventInput = {
   attendees: number;
   status: EventStatus;
   dietaryRestrictions?: string | null;
+  dietaryTags?: DietaryTag[];
+  setupTime?: string | null;
+  serviceTime?: string | null;
+  endTime?: string | null;
+  venueContact?: string | null;
+  venuePhone?: string | null;
   notes?: string | null;
   estimatedCost?: number | null;
+  packingItems?: PackingItem[];
+  expenses?: EventExpense[];
+  staff?: EventStaff[];
   services: ServiceType[];
   recipes: EventRecipeInput[];
 };
@@ -144,6 +157,8 @@ export type QuoteInput = {
   depositAmount?: number;
   foodCost?: number;
   payments?: QuotePaymentInput[];
+  dueDate?: string | null;
+  lastContactedAt?: string | null;
 };
 
 export type ShoppingLine = {

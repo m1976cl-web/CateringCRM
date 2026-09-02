@@ -11,6 +11,9 @@ import {
   SERVICE_TYPE_LABELS,
   type ServiceType,
 } from "../../shared/types";
+import { DIETARY_TAGS, DIETARY_TAG_LABELS, type DietaryTag } from "../../shared/ops";
+import { useAuth } from "../components/AuthGate";
+import { canDeleteCatalog } from "../../shared/roles";
 
 type IngRow = { ingredientId: number; quantity: number };
 
@@ -20,9 +23,11 @@ const blank = {
   category: "",
   instructions: "",
   estimatedCost: "",
+  imageUrl: "",
 };
 
 export function RecipesPage() {
+  const { user } = useAuth();
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
   const [form, setForm] = useState(blank);
@@ -35,6 +40,7 @@ export function RecipesPage() {
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [filterService, setFilterService] = useState<ServiceType | "">("");
   const [query, setQuery] = useState("");
+  const [allergens, setAllergens] = useState<DietaryTag[]>([]);
 
   async function load() {
     setLoading(true);
@@ -58,6 +64,7 @@ export function RecipesPage() {
     setEditingId(null);
     setForm(blank);
     setSuitable([]);
+    setAllergens([]);
     setIngs([]);
   }
 
@@ -69,8 +76,10 @@ export function RecipesPage() {
       category: r.category ?? "",
       instructions: r.instructions ?? "",
       estimatedCost: r.estimatedCost != null ? String(r.estimatedCost) : "",
+      imageUrl: r.imageUrl ?? "",
     });
     setSuitable(r.suitableServices ?? []);
+    setAllergens(r.allergenTags ?? []);
     setIngs(r.ingredients.map((x) => ({ ingredientId: x.ingredientId, quantity: x.quantity })));
   }
 
@@ -95,6 +104,8 @@ export function RecipesPage() {
         suitableServices: suitable,
         instructions: form.instructions || null,
         estimatedCost: form.estimatedCost === "" ? null : Number(form.estimatedCost),
+        imageUrl: form.imageUrl.trim() || null,
+        allergenTags: allergens,
         ingredients,
       };
       if (editingId) await api.updateRecipe(editingId, payload);
@@ -183,6 +194,43 @@ export function RecipesPage() {
                   onClick={() => toggleService(s)}
                 >
                   {SERVICE_TYPE_LABELS[s]}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <FormField label="Foto (URL)" hint="Pega un enlace a una imagen. No se sube archivo.">
+            <input
+              value={form.imageUrl}
+              onChange={(e) => setForm({ ...form, imageUrl: e.target.value })}
+              placeholder="https://…"
+            />
+          </FormField>
+          {form.imageUrl.trim() ? (
+            <img
+              src={form.imageUrl.trim()}
+              alt=""
+              style={{ maxWidth: 160, maxHeight: 120, objectFit: "cover", borderRadius: 8 }}
+            />
+          ) : null}
+
+          <div>
+            <div className="field-label" style={{ marginBottom: 8 }}>
+              Contiene / alérgenos
+            </div>
+            <div className="chips">
+              {DIETARY_TAGS.filter((t) => t !== "vegano" && t !== "vegetariano").map((tag) => (
+                <button
+                  key={tag}
+                  type="button"
+                  className={`chip ${allergens.includes(tag) ? "on" : ""}`}
+                  onClick={() =>
+                    setAllergens((prev) =>
+                      prev.includes(tag) ? prev.filter((x) => x !== tag) : [...prev, tag],
+                    )
+                  }
+                >
+                  {DIETARY_TAG_LABELS[tag]}
                 </button>
               ))}
             </div>
@@ -340,7 +388,15 @@ export function RecipesPage() {
             <div className="list" style={{ marginTop: 12 }}>
               {visible.map((r) => (
                 <div key={r.id} className="list-item">
-                  <div>
+                  <div className="inline-row" style={{ alignItems: "flex-start", gap: 12 }}>
+                    {r.imageUrl ? (
+                      <img
+                        src={r.imageUrl}
+                        alt=""
+                        style={{ width: 64, height: 64, objectFit: "cover", borderRadius: 8 }}
+                      />
+                    ) : null}
+                    <div>
                     <h3>{r.name}</h3>
                     <div className="meta">
                       Rinde {r.yieldPortions} porciones · {r.ingredients.length} ingredientes
@@ -359,6 +415,16 @@ export function RecipesPage() {
                         Sirve para cualquier servicio
                       </div>
                     )}
+                    {r.allergenTags.length ? (
+                      <div className="chip-row" style={{ marginTop: 6 }}>
+                        {r.allergenTags.map((tag) => (
+                          <span key={tag} className="badge tone-warn">
+                            {DIETARY_TAG_LABELS[tag]}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+                    </div>
                   </div>
                   <div className="page-actions">
                     <button type="button" className="btn" onClick={() => startEdit(r)}>
@@ -375,6 +441,7 @@ export function RecipesPage() {
                     >
                       Duplicar
                     </button>
+                    {canDeleteCatalog(user.role) ? (
                     <button
                       type="button"
                       className="btn danger"
@@ -382,6 +449,7 @@ export function RecipesPage() {
                     >
                       Eliminar
                     </button>
+                    ) : null}
                   </div>
                 </div>
               ))}
