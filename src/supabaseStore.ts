@@ -19,7 +19,7 @@ import {
   paymentsFromQuoteInput,
   sumPayments,
 } from "../shared/quoteLifecycle";
-import { hashPassword, normalizeRecoveryCode, randomRecoveryCode, randomToken, sha256Hex, verifyPassword } from "../shared/password";
+import { hashPassword, normalizeRecoveryCode, randomRecoveryCode } from "../shared/password";
 import type {
   AuthUser,
   Client,
@@ -34,7 +34,6 @@ import type {
   ShoppingList,
   Supplier,
 } from "./api";
-import { getSessionToken } from "./session";
 import { getSupabase } from "./supabase";
 
 type ClientRow = {
@@ -128,13 +127,8 @@ type QuotePaymentRow = {
   notes: string | null;
 };
 
-type TeamUserRow = {
-  id: number;
-  email: string;
-  name: string;
-  password_salt: string;
-  password_hash: string;
-};
+type AuthRpcUser = { id: number; email: string; name: string };
+type AuthRpcSession = { user: AuthRpcUser; token: string };
 
 type ShoppingListRow = {
   id: number;
@@ -237,60 +231,14 @@ async function replaceCloudPayments(quoteId: number, body: QuoteInput): Promise<
   return deposit;
 }
 
+async function rpcJson<T>(fn: string, args: Record<string, unknown> = {}): Promise<T> {
+  const { data, error } = await getSupabase().rpc(fn, args);
+  if (error) fail(error.message);
+  return data as T;
+}
+
 function toPublicUser(row: { id: number; email: string; name: string }): AuthUser {
   return { id: row.id, email: row.email, name: row.name };
-}
-
-async function cloudSessionUser(): Promise<AuthUser | null> {
-  const token = getSessionToken();
-  if (!token) return null;
-  const tokenHash = await sha256Hex(token);
-  const { data } = await getSupabase()
-    .from("team_sessions")
-    .select("user_id, expires_at")
-    .eq("token_hash", tokenHash)
-    .maybeSingle();
-  const session = data as { user_id: number; expires_at: string } | null;
-  if (!session || new Date(session.expires_at).getTime() <= Date.now()) return null;
-  const { data: user } = await getSupabase()
-    .from("team_users")
-    .select("id, email, name")
-    .eq("id", session.user_id)
-    .maybeSingle();
-  return user ? toPublicUser(user as TeamUserRow) : null;
-}
-
-async function createCloudSession(userId: number): Promise<string> {
-  const token = randomToken();
-  const { error } = await getSupabase().from("team_sessions").insert({
-    user_id: userId,
-    token_hash: await sha256Hex(token),
-    expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-  });
-  if (error) throw new Error(error.message);
-  return token;
-}
-
-async function issueCloudRecovery(): Promise<string> {
-  const code = randomRecoveryCode();
-  const hashed = await hashPassword(normalizeRecoveryCode(code));
-  const sb = getSupabase();
-  const { error: delErr } = await sb.from("team_recovery").delete().gte("id", 0);
-  if (delErr) throw new Error(delErr.message);
-  const { error } = await sb.from("team_recovery").insert({
-    code_salt: hashed.salt,
-    code_hash: hashed.hash,
-  });
-  if (error) throw new Error(error.message);
-  return code;
-}
-
-async function cloudHasRecovery(): Promise<boolean> {
-  const { count, error } = await getSupabase()
-    .from("team_recovery")
-    .select("id", { count: "exact", head: true });
-  if (error) throw new Error(error.message);
-  return (count ?? 0) > 0;
 }
 
 function mapClient(row: ClientRow): Client {
@@ -1260,69 +1208,57 @@ export const cloud = {
   },
 
   async authStatus() {
-    const { count, error } = await getSupabase()
-      .from("team_users")
-      .select("id", { count: "exact", head: true });
-    if (error) throw new Error(error.message);
-    const configured = (count ?? 0) > 0;
-    const user = configured ? await cloudSessionUser() : null;
-    return { configured, user, hasRecovery: await cloudHasRecovery() };
+    const status = await rpcJson<{
+      configured: boolean;
+      user: AuthRpcUser | null;
+      hasRecovery: boolean;
+    }>("crm_auth_status");
+    return {
+      configured: Boolean(status.configured),
+      user: status.user ? toPublicUser(status.user) : null,
+      hasRecovery: Boolean(status.hasRecovery),
+    };
   },
 
   async authSetup(body: { name: string; email: string; password: string }) {
-    const { count } = await getSupabase()
-      .from("team_users")
-      .select("id", { count: "exact", head: true });
-    if ((count ?? 0) > 0) fail("El acceso del equipo ya está creado");
     const name = body.name.trim();
     const email = body.email.trim().toLowerCase();
     if (!name) fail("El nombre es obligatorio");
     if (!email.includes("@")) fail("Indica un email válido");
     if (body.password.length < 8) fail("La contraseña debe tener al menos 8 caracteres");
     const hashed = await hashPassword(body.password);
-    const { data, error } = await getSupabase()
-      .from("team_users")
-      .insert({
-        name,
-        email,
-        password_salt: hashed.salt,
-        password_hash: hashed.hash,
-      })
-      .select("id, email, name")
-      .single();
-    const row = assertOk(data as { id: number; email: string; name: string } | null, error, "No se pudo crear el acceso");
-    const token = await createCloudSession(row.id);
-    const recoveryCode = await issueCloudRecovery();
-    return { user: toPublicUser(row), token, recoveryCode };
+    const recoveryCode = randomRecoveryCode();
+    const recovery = await hashPassword(normalizeRecoveryCode(recoveryCode));
+    const res = await rpcJson<AuthRpcSession>("crm_auth_setup", {
+      p_name: name,
+      p_email: email,
+      p_password_salt: hashed.salt,
+      p_password_hash: hashed.hash,
+      p_recovery_salt: recovery.salt,
+      p_recovery_hash: recovery.hash,
+    });
+    return { user: toPublicUser(res.user), token: res.token, recoveryCode };
   },
 
   async authLogin(body: { email: string; password: string }) {
     const email = body.email.trim().toLowerCase();
-    const { data, error } = await getSupabase()
-      .from("team_users")
-      .select("*")
-      .eq("email", email)
-      .maybeSingle();
-    const row = data as TeamUserRow | null;
-    if (error || !row || !(await verifyPassword(body.password, row.password_salt, row.password_hash))) {
-      fail("Email o contraseña incorrectos");
-    }
-    const token = await createCloudSession(row.id);
-    return { user: toPublicUser(row), token };
+    const { salt } = await rpcJson<{ salt: string }>("crm_auth_login_salt", { p_email: email });
+    const hashed = await hashPassword(body.password, salt);
+    const res = await rpcJson<AuthRpcSession>("crm_auth_login", {
+      p_email: email,
+      p_password_hash: hashed.hash,
+    });
+    return { user: toPublicUser(res.user), token: res.token };
   },
 
   async authLogout() {
-    const token = getSessionToken();
-    if (token) {
-      await getSupabase().from("team_sessions").delete().eq("token_hash", await sha256Hex(token));
-    }
+    await rpcJson<{ ok: boolean }>("crm_auth_logout");
     return { ok: true };
   },
 
   async authListUsers(): Promise<AuthUser[]> {
-    const { data, error } = await getSupabase().from("team_users").select("id, email, name");
-    const rows = assertOk(data as Array<{ id: number; email: string; name: string }> | null, error, "No se pudo cargar el equipo");
-    return rows.map(toPublicUser);
+    const rows = await rpcJson<AuthRpcUser[]>("crm_auth_users");
+    return (rows ?? []).map(toPublicUser);
   },
 
   async authAddUser(body: { name: string; email: string; password: string }) {
@@ -1332,117 +1268,67 @@ export const cloud = {
     if (!email.includes("@")) fail("Indica un email válido");
     if (body.password.length < 8) fail("La contraseña debe tener al menos 8 caracteres");
     const hashed = await hashPassword(body.password);
-    const { data, error } = await getSupabase()
-      .from("team_users")
-      .insert({
-        name,
-        email,
-        password_salt: hashed.salt,
-        password_hash: hashed.hash,
-      })
-      .select("id, email, name")
-      .single();
-    const row = assertOk(data as { id: number; email: string; name: string } | null, error, "No se pudo agregar a la persona");
-    return { user: toPublicUser(row) };
+    const res = await rpcJson<{ user: AuthRpcUser }>("crm_auth_add_user", {
+      p_name: name,
+      p_email: email,
+      p_password_salt: hashed.salt,
+      p_password_hash: hashed.hash,
+    });
+    return { user: toPublicUser(res.user) };
   },
 
   async authChangePassword(body: { currentPassword: string; password: string }) {
-    const user = await cloudSessionUser();
-    if (!user) fail("Inicia sesión para continuar");
     if (body.password.length < 8) fail("La contraseña debe tener al menos 8 caracteres");
-    const { data } = await getSupabase().from("team_users").select("*").eq("id", user.id).maybeSingle();
-    const row = data as TeamUserRow | null;
-    if (!row) fail("Usuario no encontrado");
-    if (!(await verifyPassword(body.currentPassword, row.password_salt, row.password_hash))) {
-      fail("La contraseña actual no es correcta");
-    }
-    const hashed = await hashPassword(body.password);
-    const { error } = await getSupabase()
-      .from("team_users")
-      .update({
-        password_salt: hashed.salt,
-        password_hash: hashed.hash,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", user.id);
-    if (error) throw new Error(error.message);
+    const { salt } = await rpcJson<{ salt: string }>("crm_auth_password_salt");
+    const current = await hashPassword(body.currentPassword, salt);
+    const next = await hashPassword(body.password);
+    await rpcJson<{ ok: boolean }>("crm_auth_change_password", {
+      p_current_hash: current.hash,
+      p_new_salt: next.salt,
+      p_new_hash: next.hash,
+    });
     return { ok: true };
   },
 
   async authDeleteUser(id: number) {
-    const me = await cloudSessionUser();
-    if (!me) fail("Inicia sesión para continuar");
-    if (id === me.id) fail("No puedes quitarte a ti mismo");
-    const { count, error: countErr } = await getSupabase()
-      .from("team_users")
-      .select("id", { count: "exact", head: true });
-    if (countErr) throw new Error(countErr.message);
-    if ((count ?? 0) <= 1) fail("Debe quedar al menos una persona con acceso");
-    const { data } = await getSupabase().from("team_users").select("id").eq("id", id).maybeSingle();
-    if (!data) fail("Usuario no encontrado");
-    const { error } = await getSupabase().from("team_users").delete().eq("id", id);
-    if (error) throw new Error(error.message);
+    await rpcJson<{ ok: boolean }>("crm_auth_delete_user", { p_user_id: id });
     return { ok: true };
   },
 
   async authResetUserPassword(body: { userId: number; password: string }) {
-    const me = await cloudSessionUser();
-    if (!me) fail("Inicia sesión para continuar");
-    if (body.userId === me.id) fail("Para tu contraseña usa Cambiar mi contraseña");
     if (body.password.length < 8) fail("La contraseña debe tener al menos 8 caracteres");
-    const { data } = await getSupabase().from("team_users").select("id").eq("id", body.userId).maybeSingle();
-    if (!data) fail("Usuario no encontrado");
     const hashed = await hashPassword(body.password);
-    const { error } = await getSupabase()
-      .from("team_users")
-      .update({
-        password_salt: hashed.salt,
-        password_hash: hashed.hash,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", body.userId);
-    if (error) throw new Error(error.message);
-    await getSupabase().from("team_sessions").delete().eq("user_id", body.userId);
+    await rpcJson<{ ok: boolean }>("crm_auth_reset_password", {
+      p_user_id: body.userId,
+      p_new_salt: hashed.salt,
+      p_new_hash: hashed.hash,
+    });
     return { ok: true };
   },
 
   async authIssueRecoveryCode() {
-    const me = await cloudSessionUser();
-    const { count } = await getSupabase()
-      .from("team_users")
-      .select("id", { count: "exact", head: true });
-    if ((count ?? 0) > 0 && !me) fail("Inicia sesión para continuar");
-    const recoveryCode = await issueCloudRecovery();
+    const recoveryCode = randomRecoveryCode();
+    const hashed = await hashPassword(normalizeRecoveryCode(recoveryCode));
+    await rpcJson<{ ok: boolean }>("crm_auth_set_recovery", {
+      p_code_salt: hashed.salt,
+      p_code_hash: hashed.hash,
+    });
     return { recoveryCode };
   },
 
   async authRecover(body: { email: string; code: string; password: string }) {
     const email = body.email.trim().toLowerCase();
-    const { data, error } = await getSupabase()
-      .from("team_users")
-      .select("*")
-      .eq("email", email)
-      .maybeSingle();
-    const row = data as TeamUserRow | null;
-    const { data: recoveryRows } = await getSupabase().from("team_recovery").select("*").limit(1);
-    const recovery = (recoveryRows as Array<{ code_salt: string; code_hash: string }> | null)?.[0];
-    const codeOk =
-      recovery &&
-      (await verifyPassword(normalizeRecoveryCode(body.code), recovery.code_salt, recovery.code_hash));
-    if (error || !row || !codeOk) fail("Email o código incorrectos");
     if (body.password.length < 8) fail("La contraseña debe tener al menos 8 caracteres");
+    const { salt } = await rpcJson<{ salt: string }>("crm_auth_recovery_salt");
+    const codeHash = await hashPassword(normalizeRecoveryCode(body.code), salt);
     const hashed = await hashPassword(body.password);
-    const { error: updErr } = await getSupabase()
-      .from("team_users")
-      .update({
-        password_salt: hashed.salt,
-        password_hash: hashed.hash,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", row.id);
-    if (updErr) throw new Error(updErr.message);
-    await getSupabase().from("team_sessions").delete().eq("user_id", row.id);
-    const token = await createCloudSession(row.id);
-    return { user: toPublicUser(row), token };
+    const res = await rpcJson<AuthRpcSession>("crm_auth_recover", {
+      p_email: email,
+      p_code_hash: codeHash.hash,
+      p_new_salt: hashed.salt,
+      p_new_hash: hashed.hash,
+    });
+    return { user: toPublicUser(res.user), token: res.token };
   },
 };
+
