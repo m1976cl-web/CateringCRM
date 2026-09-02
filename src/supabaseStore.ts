@@ -20,6 +20,7 @@ import {
   sumPayments,
 } from "../shared/quoteLifecycle";
 import { hashPassword, normalizeRecoveryCode, randomRecoveryCode } from "../shared/password";
+import { parseDemoLoginFlag } from "../shared/demoLogin";
 import type {
   AuthUser,
   Client,
@@ -1212,11 +1213,14 @@ export const cloud = {
       configured: boolean;
       user: AuthRpcUser | null;
       hasRecovery: boolean;
+      demoAvailable?: boolean;
     }>("crm_auth_status");
     return {
       configured: Boolean(status.configured),
       user: status.user ? toPublicUser(status.user) : null,
       hasRecovery: Boolean(status.hasRecovery),
+      demoAvailable:
+        status.demoAvailable !== false && parseDemoLoginFlag(import.meta.env.VITE_DEMO_LOGIN),
     };
   },
 
@@ -1249,6 +1253,22 @@ export const cloud = {
       p_password_hash: hashed.hash,
     });
     return { user: toPublicUser(res.user), token: res.token };
+  },
+
+  async authDemoLogin() {
+    if (!parseDemoLoginFlag(import.meta.env.VITE_DEMO_LOGIN)) {
+      fail("El acceso de prueba está desactivado");
+    }
+    try {
+      const res = await rpcJson<AuthRpcSession>("crm_auth_demo");
+      return { user: toPublicUser(res.user), token: res.token };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "";
+      if (/crm_auth_demo|does not exist|PGRST202|schema cache/i.test(msg)) {
+        fail("Falta aplicar supabase/migrations/007_demo_login.sql en el SQL Editor de Supabase.");
+      }
+      throw e;
+    }
   },
 
   async authLogout() {
