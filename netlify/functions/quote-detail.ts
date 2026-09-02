@@ -22,6 +22,11 @@ async function quoteDetail(id: number) {
       status: quotes.status,
       depositAmount: quotes.depositAmount,
       foodCost: quotes.foodCost,
+      version: quotes.version,
+      parentQuoteId: quotes.parentQuoteId,
+      publicToken: quotes.publicToken,
+      dueDate: quotes.dueDate,
+      lastContactedAt: quotes.lastContactedAt,
       createdAt: quotes.createdAt,
       updatedAt: quotes.updatedAt,
       eventTitle: events.title,
@@ -79,6 +84,12 @@ export default async (req: Request, context: Context) => {
         notes: asOptionalString(body.notes),
         status: body.status,
         foodCost: Math.max(0, asNumber(body.foodCost, 0)),
+        ...(body.dueDate !== undefined
+          ? { dueDate: body.dueDate ? new Date(String(body.dueDate)) : null }
+          : {}),
+        ...(body.lastContactedAt !== undefined
+          ? { lastContactedAt: body.lastContactedAt ? new Date(String(body.lastContactedAt)) : null }
+          : {}),
         updatedAt: now(),
       })
       .where(eq(quotes.id, id))

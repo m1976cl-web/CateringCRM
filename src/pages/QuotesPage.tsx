@@ -3,6 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import {
   api,
   formatDate,
+  formatDateOnly,
   formatMoney,
   toDatetimeLocal,
   type EventDetail,
@@ -21,6 +22,9 @@ import { quoteMoney } from "../quoteDisplay";
 import { nextQuoteNumber } from "../quotes";
 import { sumPayments } from "../../shared/quoteLifecycle";
 import { whatsappPhoneUrl, whatsappTextUrl } from "../whatsapp";
+import { publicQuoteUrl } from "../publicQuote";
+import { useAuth } from "../components/AuthGate";
+import { canEditQuotes } from "../../shared/roles";
 import {
   PAYMENT_METHODS,
   PAYMENT_METHOD_LABELS,
@@ -80,6 +84,7 @@ function whatsappQuoteUrl(q: {
 }
 
 export function QuotesPage() {
+  const { user } = useAuth();
   const [searchParams] = useSearchParams();
   const [quotes, setQuotes] = useState<QuoteSummary[]>([]);
   const [events, setEvents] = useState<EventSummary[]>([]);
@@ -99,6 +104,8 @@ export function QuotesPage() {
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [prefillDone, setPrefillDone] = useState(false);
   const [query, setQuery] = useState("");
+  const [dueDate, setDueDate] = useState("");
+  const [linkMsg, setLinkMsg] = useState("");
   const settings = loadCompanySettings();
 
   const total = useMemo(() => quoteTotal(items), [items]);
@@ -159,6 +166,7 @@ export function QuotesPage() {
     setPayments([]);
     setFoodCost(0);
     setItems([blankItem()]);
+    setDueDate("");
   }
 
   function startEdit(q: QuoteSummary) {
@@ -171,6 +179,33 @@ export function QuotesPage() {
     setPayments(q.payments?.length ? q.payments.map((p) => ({ ...p })) : []);
     setFoodCost(q.foodCost ?? 0);
     setItems(q.items.length ? q.items : [blankItem()]);
+    setDueDate(q.dueDate ? toDatetimeLocal(q.dueDate) : "");
+  }
+
+  async function createVersion(q: QuoteSummary) {
+    try {
+      const created = await api.duplicateQuote(q.id);
+      const list = await load();
+      const row = list.find((x) => x.id === created.id) ?? created;
+      startEdit(row);
+      setSaveMsg(`Nueva versión ${created.version} en borrador.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo crear la versión");
+    }
+  }
+
+  async function copyPublicLink(q: QuoteSummary) {
+    if (!q.publicToken) {
+      setError("Esta cotización aún no tiene enlace público. Guárdala de nuevo.");
+      return;
+    }
+    const url = publicQuoteUrl(q.publicToken);
+    try {
+      await navigator.clipboard.writeText(url);
+      setLinkMsg(`Enlace copiado: ${url}`);
+    } catch {
+      setLinkMsg(url);
+    }
   }
 
   function duplicateQuote(q: QuoteSummary) {
@@ -183,6 +218,7 @@ export function QuotesPage() {
     setPayments(q.payments?.length ? q.payments.map((p) => ({ ...p, id: undefined })) : []);
     setFoodCost(q.foodCost ?? 0);
     setItems(q.items.length ? q.items.map((i) => ({ ...i })) : [blankItem()]);
+    setDueDate(q.dueDate ? toDatetimeLocal(q.dueDate) : "");
   }
 
   async function fillFromEventId(id: number) {
@@ -258,6 +294,7 @@ export function QuotesPage() {
         status,
         foodCost,
         payments,
+        dueDate: dueDate ? new Date(dueDate).toISOString() : null,
       };
       if (editingId) await api.updateQuote(editingId, payload);
       else await api.createQuote(payload);
@@ -291,6 +328,15 @@ export function QuotesPage() {
     }
   }
 
+  if (!canEditQuotes(user.role)) {
+    return (
+      <div className="empty">
+        <h2>Cotizaciones</h2>
+        <p>Tu rol de cocina no edita cotizaciones. Usa eventos y la hoja de producción.</p>
+      </div>
+    );
+  }
+
   return (
     <div>
       <PageHeader
@@ -299,6 +345,7 @@ export function QuotesPage() {
       />
       {error ? <div className="error-box">{error}</div> : null}
       {saveMsg ? <p className="meta">{saveMsg}</p> : null}
+      {linkMsg ? <p className="meta">{linkMsg}</p> : null}
 
       <div className="split">
         <form className="panel form-grid" onSubmit={onSubmit}>
@@ -352,6 +399,9 @@ export function QuotesPage() {
               </select>
             </FormField>
           </div>
+          <FormField label="Vencimiento / cobro" hint="Fecha para la cola de cobranza. Por defecto, el día del evento.">
+            <input type="datetime-local" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+          </FormField>
 
           <div>
             <div className="page-header" style={{ marginBottom: 8 }}>
@@ -569,9 +619,11 @@ export function QuotesPage() {
                   <div>
                     <h3>
                       {q.quoteNumber || `Cotización #${q.id}`} — {formatMoney(rowMoney.total)}
+                      {q.version > 1 ? ` · v${q.version}` : ""}
                     </h3>
                     <div className="meta">
                       {q.clientName} · {q.eventTitle} · {formatDate(q.quoteDate)}
+                      {q.dueDate ? ` · cobro ${formatDateOnly(q.dueDate)}` : ""}
                       {rowMoney.addIva ? ` · IVA ${rowMoney.ivaRate}% incluido` : ""}
                       {rowMoney.foodCost > 0
                         ? ` · margen ${formatMoney(rowMoney.margin)}${rowMoney.marginPct != null ? ` (${rowMoney.marginPct}%)` : ""}`
@@ -601,8 +653,14 @@ export function QuotesPage() {
                     <Link className="btn" to={`/cotizaciones/${q.id}/imprimir`}>
                       Imprimir / PDF
                     </Link>
+                    <button type="button" className="btn" onClick={() => void copyPublicLink(q)}>
+                      Link público
+                    </button>
                     <button type="button" className="btn" onClick={() => startEdit(q)}>
                       Editar
+                    </button>
+                    <button type="button" className="btn" onClick={() => void createVersion(q)}>
+                      Nueva versión
                     </button>
                     <button type="button" className="btn" onClick={() => duplicateQuote(q)}>
                       Duplicar

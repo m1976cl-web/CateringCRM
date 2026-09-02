@@ -2,6 +2,7 @@ import { NavLink, useLocation } from "react-router-dom";
 import { useEffect, useState, type ReactNode } from "react";
 import { getDataMode, getDataModeLabel } from "../api";
 import { isDemoUserEmail } from "../../shared/demoLogin";
+import { canEditClients, canEditQuotes, TEAM_ROLE_LABELS } from "../../shared/roles";
 import { useAuth } from "./AuthGate";
 import { onOfflineFallback, resetOfflineFallbackFlag } from "../offlineBanner";
 import { InstallButton } from "./InstallButton";
@@ -12,6 +13,7 @@ const operationLinks = [
   { to: "/calendario", label: "Calendario" },
   { to: "/compras", label: "Compras" },
   { to: "/cotizaciones", label: "Cotizaciones" },
+  { to: "/cobranza", label: "Cobranza" },
 ];
 
 const catalogLinks = [
@@ -34,6 +36,15 @@ export function Layout({ children }: { children: ReactNode }) {
   const location = useLocation();
   const mode = getDataMode();
   const { user, logout } = useAuth();
+  const role = user.role;
+  const visibleOps = operationLinks.filter((link) => {
+    if (link.to === "/cotizaciones" || link.to === "/cobranza") return canEditQuotes(role);
+    return true;
+  });
+  const visibleCatalog = catalogLinks.filter((link) => {
+    if (link.to === "/clientes" || link.to === "/proveedores") return canEditClients(role);
+    return true;
+  });
 
   useEffect(() => {
     setMenuOpen(false);
@@ -71,7 +82,7 @@ export function Layout({ children }: { children: ReactNode }) {
             >
               {getDataModeLabel(mode)}
             </span>
-            <span className="meta" title={user.email}>
+            <span className="meta" title={`${user.email} · ${TEAM_ROLE_LABELS[role]}`}>
               {user.name}
             </span>
             <InstallButton />
@@ -101,7 +112,7 @@ export function Layout({ children }: { children: ReactNode }) {
         >
           <div className="nav-group">
             <span className="nav-group-label">Operación</span>
-            {operationLinks.map((link) => (
+            {visibleOps.map((link) => (
               <NavLink
                 key={link.to}
                 to={link.to}
@@ -114,7 +125,7 @@ export function Layout({ children }: { children: ReactNode }) {
           </div>
           <div className="nav-group">
             <span className="nav-group-label">Catálogo</span>
-            {catalogLinks.map((link) => (
+            {visibleCatalog.map((link) => (
               <NavLink
                 key={link.to}
                 to={link.to}

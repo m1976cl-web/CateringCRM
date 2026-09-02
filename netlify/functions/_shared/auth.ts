@@ -1,4 +1,4 @@
-import { and, count, eq, gt } from "drizzle-orm";
+import { and, count, eq, gt, ne } from "drizzle-orm";
 import { db } from "../../../db";
 import { teamRecovery, teamSessions, teamUsers } from "../../../db/schema";
 import {
@@ -10,12 +10,14 @@ import {
   verifyPassword,
 } from "../../../shared/password";
 import { DEMO_USER_EMAIL, DEMO_USER_NAME, parseDemoLoginFlag } from "../../../shared/demoLogin";
+import { normalizeRole, type TeamRole } from "../../../shared/roles";
 import { error, now } from "./http";
 
 export type AuthUser = {
   id: number;
   email: string;
   name: string;
+  role: TeamRole;
 };
 
 const SESSION_DAYS = 30;
@@ -24,12 +26,20 @@ export function normalizeEmail(value: unknown): string {
   return String(value ?? "").trim().toLowerCase();
 }
 
-export function publicUser(row: { id: number; email: string; name: string }): AuthUser {
-  return { id: row.id, email: row.email, name: row.name };
+export function publicUser(row: { id: number; email: string; name: string; role?: string | null }): AuthUser {
+  return { id: row.id, email: row.email, name: row.name, role: normalizeRole(row.role) };
 }
 
 export async function hasTeamUsers(): Promise<boolean> {
   const [row] = await db.select({ value: count() }).from(teamUsers);
+  return (row?.value ?? 0) > 0;
+}
+
+export async function hasNonDemoUsers(): Promise<boolean> {
+  const [row] = await db
+    .select({ value: count() })
+    .from(teamUsers)
+    .where(ne(teamUsers.email, DEMO_USER_EMAIL));
   return (row?.value ?? 0) > 0;
 }
 
@@ -49,6 +59,7 @@ export async function getSessionUser(req: Request): Promise<AuthUser | null> {
       id: teamUsers.id,
       email: teamUsers.email,
       name: teamUsers.name,
+      role: teamUsers.role,
       expiresAt: teamSessions.expiresAt,
     })
     .from(teamSessions)
@@ -63,6 +74,28 @@ export async function denyIfUnauthorized(req: Request): Promise<Response | null>
   const user = await getSessionUser(req);
   if (user) return null;
   return error("Inicia sesión para continuar", 401);
+}
+
+export async function denyIfCannot(
+  req: Request,
+  allowed: (role: TeamRole) => boolean,
+): Promise<Response | null> {
+  const denied = await denyIfUnauthorized(req);
+  if (denied) return denied;
+  if (!(await hasTeamUsers())) return null;
+  const user = await getSessionUser(req);
+  if (!user) return error("Inicia sesión para continuar", 401);
+  if (!allowed(user.role)) return error("No tienes permiso para esta acción", 403);
+  return null;
+}
+
+export async function setUserRole(userId: number, role: TeamRole): Promise<AuthUser | null> {
+  const [updated] = await db
+    .update(teamUsers)
+    .set({ role: normalizeRole(role), updatedAt: now() })
+    .where(eq(teamUsers.id, userId))
+    .returning();
+  return updated ? publicUser(updated) : null;
 }
 
 export async function createSession(userId: number): Promise<{ token: string; expiresAt: Date }> {

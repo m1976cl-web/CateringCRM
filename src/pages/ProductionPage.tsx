@@ -4,6 +4,7 @@ import { api, formatDate, type Client, type EventDetail, type Recipe } from "../
 import { loadCompanySettings } from "../settings";
 import { scaleRecipeLines } from "../../shared/shopping";
 import { SERVICE_TYPE_LABELS, SERVICE_TYPES, type ServiceType } from "../../shared/types";
+import { DIETARY_TAG_LABELS, STAFF_ROLE_LABELS } from "../../shared/ops";
 import { whatsappPhoneUrl } from "../whatsapp";
 
 export function ProductionPage() {
@@ -75,6 +76,17 @@ export function ProductionPage() {
           <div>{formatDate(event.eventDate)}</div>
           <div>{event.attendees} personas</div>
           {event.location ? <div>{event.location}</div> : null}
+          {event.setupTime || event.serviceTime || event.endTime ? (
+            <div>
+              {[
+                event.setupTime ? `Montaje ${event.setupTime}` : null,
+                event.serviceTime ? `Servicio ${event.serviceTime}` : null,
+                event.endTime ? `Término ${event.endTime}` : null,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </div>
+          ) : null}
         </div>
       </header>
 
@@ -87,12 +99,19 @@ export function ProductionPage() {
         {client?.phone ? <p className="meta" style={{ margin: "6px 0 0" }}>{client.phone}</p> : null}
       </section>
 
-      {event.dietaryRestrictions ? (
+      {event.dietaryRestrictions || event.dietaryTags.length ? (
         <section className="banner banner-danger" style={{ marginTop: 16 }}>
           <strong>Restricciones / alergias</strong>
-          <p style={{ whiteSpace: "pre-wrap", margin: "6px 0 0", fontWeight: 500 }}>
-            {event.dietaryRestrictions}
-          </p>
+          {event.dietaryTags.length ? (
+            <p style={{ margin: "6px 0 0" }}>
+              {event.dietaryTags.map((t) => DIETARY_TAG_LABELS[t]).join(" · ")}
+            </p>
+          ) : null}
+          {event.dietaryRestrictions ? (
+            <p style={{ whiteSpace: "pre-wrap", margin: "6px 0 0", fontWeight: 500 }}>
+              {event.dietaryRestrictions}
+            </p>
+          ) : null}
         </section>
       ) : null}
 
@@ -141,6 +160,33 @@ export function ProductionPage() {
         <section style={{ marginTop: 24 }}>
           <h3>Notas del evento</h3>
           <p style={{ whiteSpace: "pre-wrap" }}>{event.notes}</p>
+        </section>
+      ) : null}
+
+      {event.staff.length ? (
+        <section style={{ marginTop: 24 }}>
+          <h3>Personal</h3>
+          <ul>
+            {event.staff.map((s) => (
+              <li key={s.id}>
+                {s.name} · {STAFF_ROLE_LABELS[s.role]}
+                {s.notes ? ` (${s.notes})` : ""}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {event.packingItems.length ? (
+        <section style={{ marginTop: 24 }}>
+          <h3>Packing / montaje</h3>
+          <ul>
+            {event.packingItems.map((item) => (
+              <li key={item.id}>
+                {item.packed ? "☑" : "☐"} {item.quantity}× {item.label}
+              </li>
+            ))}
+          </ul>
         </section>
       ) : null}
     </div>
