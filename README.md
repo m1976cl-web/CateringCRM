@@ -23,7 +23,9 @@ Pensado para equipos con poco conocimiento técnico: formularios claros, textos 
 - Modo estático (GitHub Pages): sin Supabase → `localStorage` del navegador
 - PWA (`vite-plugin-pwa`): instalable en móvil y escritorio
 
-**Login de equipo.** La primera visita pide crear un email y contraseña. Después, las Functions de Netlify exigen esa sesión. En Supabase, RLS y funciones de auth exigen la misma sesión (la anon key no alcanza para leer tablas). En modo local el login cierra la interfaz.
+**Login de equipo.** La primera visita pide crear un email y contraseña. En la misma pantalla hay **Probar sin contraseña**: entra con un usuario de demostración (`demo@cateringcrm.app`) para recorrer la app online sin clave. Después, las Functions de Netlify exigen sesión. En Supabase, RLS y funciones de auth exigen la misma sesión (la anon key no alcanza para leer tablas). En modo local el login cierra la interfaz.
+
+El acceso de prueba está **activo por defecto**. Quien lo use ve y puede editar los mismos datos del CRM. Para apagarlo: `DEMO_LOGIN=false` en Netlify, o `VITE_DEMO_LOGIN=false` en el build de Pages. En Supabase, ejecuta `007_demo_login.sql` (o quita el `GRANT` de `crm_auth_demo` si ya no lo quieres).
 
 **Sin autenticación de clientes finales.** El login es para el equipo de catering, no para invitados.
 
@@ -87,7 +89,7 @@ Si también usas Supabase, actualiza `supabase/migrations/` para mantener el esq
 Sin Supabase, GitHub Pages guarda todo en el `localStorage` de cada teléfono/PC (no se comparte). Para un CRM de equipo, conecta un proyecto gratis de Supabase:
 
 1. Crea un proyecto en [supabase.com](https://supabase.com) (plan free).
-2. Abre **SQL Editor** → New query → ejecuta en orden los archivos de [`supabase/migrations/`](./supabase/migrations/) (`001` … `006`).
+2. Abre **SQL Editor** → New query → ejecuta en orden los archivos de [`supabase/migrations/`](./supabase/migrations/) (`001` … `007`).
 3. En **Project Settings → API**, copia **Project URL** y **anon public** key.
 4. En GitHub: **Settings → Secrets and variables → Actions**, crea:
    - `VITE_SUPABASE_URL`
@@ -105,6 +107,7 @@ El workflow [`.github/workflows/deploy-pages.yml`](./.github/workflows/deploy-pa
 - `VITE_STATIC_ONLY=true` — sin Netlify plugin
 - `VITE_BASE=/${{ github.event.repository.name }}/` — rutas de assets bajo el repo
 - `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` — pasados desde secrets si existen
+- `VITE_DEMO_LOGIN` — opcional; `false` oculta “Probar sin contraseña”
 - `HashRouter` — navegación compatible con Pages
 
 **Activar Pages:** Settings → Pages → Source: **GitHub Actions**.

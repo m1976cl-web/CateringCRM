@@ -1,5 +1,6 @@
 import { applyPurchaseToStock, buildShoppingLines, quantityAfterStock } from "../shared/shopping";
 import { hashPassword, normalizeRecoveryCode, randomRecoveryCode, randomToken, sha256Hex, verifyPassword } from "../shared/password";
+import { DEMO_USER_EMAIL, DEMO_USER_NAME, parseDemoLoginFlag } from "../shared/demoLogin";
 import {
   quoteTotal,
   type ClientInput,
@@ -299,6 +300,10 @@ async function issueLocalRecovery(store: Store): Promise<string> {
   const hashed = await hashPassword(normalizeRecoveryCode(code));
   store.teamRecovery = { salt: hashed.salt, hash: hashed.hash, createdAt: nowIso() };
   return code;
+}
+
+function localDemoEnabled(): boolean {
+  return parseDemoLoginFlag(import.meta.env.VITE_DEMO_LOGIN);
 }
 
 function paymentsForBody(store: Store, body: QuoteInput): QuotePayment[] {
@@ -856,7 +861,7 @@ export const local = {
     const store = read();
     const configured = store.teamUsers.length > 0;
     const user = configured ? await localSessionUser(store) : null;
-    return { configured, user, hasRecovery: Boolean(store.teamRecovery) };
+    return { configured, user, hasRecovery: Boolean(store.teamRecovery), demoAvailable: localDemoEnabled() };
   },
 
   async authSetup(body: { name: string; email: string; password: string }) {
@@ -890,6 +895,28 @@ export const local = {
     const row = store.teamUsers.find((u) => u.email === email);
     if (!row || !(await verifyPassword(body.password, row.passwordSalt, row.passwordHash))) {
       fail("Email o contraseña incorrectos");
+    }
+    const token = await createLocalSession(store, row.id);
+    write(store);
+    return { user: toPublicUser(row), token };
+  },
+
+  async authDemoLogin() {
+    if (!localDemoEnabled()) fail("El acceso de prueba está desactivado");
+    const store = read();
+    let row = store.teamUsers.find((u) => u.email === DEMO_USER_EMAIL);
+    if (!row) {
+      const hashed = await hashPassword(randomToken());
+      row = {
+        id: nextId(store, "teamUsers"),
+        email: DEMO_USER_EMAIL,
+        name: DEMO_USER_NAME,
+        passwordSalt: hashed.salt,
+        passwordHash: hashed.hash,
+        createdAt: nowIso(),
+        updatedAt: nowIso(),
+      };
+      store.teamUsers.push(row);
     }
     const token = await createLocalSession(store, row.id);
     write(store);
