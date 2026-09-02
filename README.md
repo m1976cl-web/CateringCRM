@@ -23,7 +23,7 @@ Pensado para equipos con poco conocimiento técnico: formularios claros, textos 
 - Modo estático (GitHub Pages): sin Supabase → `localStorage` del navegador
 - PWA (`vite-plugin-pwa`): instalable en móvil y escritorio
 
-**Login de equipo.** La primera visita pide crear un email y contraseña. Después, las Functions de Netlify exigen esa sesión. En modo Supabase o local el login cierra la interfaz; si el proyecto Supabase es público, restringe la anon key.
+**Login de equipo.** La primera visita pide crear un email y contraseña. Después, las Functions de Netlify exigen esa sesión. En Supabase, RLS y funciones de auth exigen la misma sesión (la anon key no alcanza para leer tablas). En modo local el login cierra la interfaz.
 
 **Sin autenticación de clientes finales.** El login es para el equipo de catering, no para invitados.
 
@@ -87,14 +87,14 @@ Si también usas Supabase, actualiza `supabase/migrations/` para mantener el esq
 Sin Supabase, GitHub Pages guarda todo en el `localStorage` de cada teléfono/PC (no se comparte). Para un CRM de equipo, conecta un proyecto gratis de Supabase:
 
 1. Crea un proyecto en [supabase.com](https://supabase.com) (plan free).
-2. Abre **SQL Editor** → New query → ejecuta en orden los archivos de [`supabase/migrations/`](./supabase/migrations/) (`001` … `004`).
+2. Abre **SQL Editor** → New query → ejecuta en orden los archivos de [`supabase/migrations/`](./supabase/migrations/) (`001` … `006`).
 3. En **Project Settings → API**, copia **Project URL** y **anon public** key.
 4. En GitHub: **Settings → Secrets and variables → Actions**, crea:
    - `VITE_SUPABASE_URL`
    - `VITE_SUPABASE_ANON_KEY`
 5. Vuelve a desplegar Pages (push a `main` o *Run workflow*). El badge debe decir **Nube (Supabase)**.
 
-**Seguridad:** el login de equipo cierra la app. Las políticas RLS de Supabase siguen siendo permisivas (la anon key puede leer/escribir). No subas la **service role** key. En Netlify, las Functions sí exigen sesión después del primer usuario.
+**Seguridad:** el login de equipo cierra la app. En Supabase, RLS exige un token de sesión (`x-team-token`); hashes de contraseña no salen por la API. No subas la **service role** key. En Netlify, las Functions también exigen sesión después del primer usuario.
 
 Si no configuras esos secrets, Pages sigue en modo estático local.
 

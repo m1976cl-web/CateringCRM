@@ -270,8 +270,9 @@ export function SettingsPage() {
           <h2>Equipo</h2>
           <p className="meta">
             Sesión de {user.name} ({user.email}). En modo servidor, las APIs rechazan peticiones sin
-            login. En Supabase/local el login cierra la app; quien tenga la clave anónima aún podría
-            acceder a la base si el proyecto es público.
+            login. En Supabase, las tablas del CRM y el acceso del equipo exigen esa sesión (RLS);
+            la clave anónima ya no alcanza para leer datos. En modo local el login solo cierra la
+            app de este dispositivo.
           </p>
           {users.length ? (
             <ul className="checklist">
