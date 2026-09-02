@@ -102,22 +102,22 @@ Si no configuras esos secrets, Pages sigue en modo estático local.
 
 ## GitHub Pages (modo estático)
 
-El workflow [`.github/workflows/deploy-pages.yml`](./.github/workflows/deploy-pages.yml) publica la SPA en Pages con:
+El sitio público es [https://m1976cl-web.github.io/CateringCRM/](https://m1976cl-web.github.io/CateringCRM/). Pages está en **Deploy from a branch** (`main` /), así que la SPA compilada vive en `/app/` y la raíz redirige ahí. El botón **Probar sin contraseña** está en esa pantalla de login.
+
+El workflow [`.github/workflows/deploy-pages.yml`](./.github/workflows/deploy-pages.yml) genera el build con:
 
 - `VITE_STATIC_ONLY=true` — sin Netlify plugin
-- `VITE_BASE=/${{ github.event.repository.name }}/` — rutas de assets bajo el repo
+- `VITE_BASE=./` — assets relativos (sirve en `/` o en `/app/`)
 - `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` — pasados desde secrets si existen
 - `VITE_DEMO_LOGIN` — opcional; `false` oculta “Probar sin contraseña”
 - `HashRouter` — navegación compatible con Pages
 
-**Activar Pages:** Settings → Pages → Source: **GitHub Actions**.
-
-URL esperada: `https://m1976cl-web.github.io/CateringCRM/`
+Si más adelante cambias Pages a Source: **GitHub Actions**, el artifact `dist/` se sirve en la raíz y el redirect deja de hacer falta.
 
 Build local de prueba:
 
 ```powershell
-$env:VITE_STATIC_ONLY="true"; $env:VITE_BASE="/CateringCRM/"; npm run build
+$env:VITE_STATIC_ONLY="true"; $env:VITE_BASE="./"; npm run build
 ```
 
 ### Instalar en el móvil (PWA)
