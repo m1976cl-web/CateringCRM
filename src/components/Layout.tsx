@@ -1,6 +1,7 @@
 import { NavLink, useLocation } from "react-router-dom";
 import { useEffect, useState, type ReactNode } from "react";
 import { getDataMode, getDataModeLabel } from "../api";
+import { isDemoUserEmail } from "../../shared/demoLogin";
 import { useAuth } from "./AuthGate";
 import { onOfflineFallback, resetOfflineFallbackFlag } from "../offlineBanner";
 import { InstallButton } from "./InstallButton";
@@ -125,6 +126,13 @@ export function Layout({ children }: { children: ReactNode }) {
           </div>
         </nav>
       </header>
+
+      {isDemoUserEmail(user.email) ? (
+        <div className="banner banner-warn" role="status">
+          Entraste sin contraseña (modo prueba). Cualquiera puede usar este acceso mientras esté
+          activo. Para datos reales, crea un usuario en Ajustes y pon <code>DEMO_LOGIN=false</code>.
+        </div>
+      ) : null}
 
       {mode === "static" ? (
         <div className="banner banner-warn" role="status">

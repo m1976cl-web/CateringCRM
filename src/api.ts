@@ -191,6 +191,7 @@ export type AuthStatus = {
   configured: boolean;
   user: AuthUser | null;
   hasRecovery: boolean;
+  demoAvailable: boolean;
 };
 
 export type DataMode = "supabase" | "netlify" | "static";
@@ -352,6 +353,8 @@ const remote = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  authDemoLogin: () =>
+    request<{ user: AuthUser; token: string }>("/api/auth?action=demo", { method: "POST" }),
   authLogout: () => request<{ ok: boolean }>("/api/auth?action=logout", { method: "POST" }),
   authListUsers: () => request<AuthUser[]>("/api/auth?action=users"),
   authAddUser: (body: { name: string; email: string; password: string }) =>
@@ -467,6 +470,7 @@ export const api = {
   authStatus: authRoute(cloud.authStatus, remote.authStatus, () => local.authStatus()),
   authSetup: authRoute(cloud.authSetup, remote.authSetup, (body) => local.authSetup(body)),
   authLogin: authRoute(cloud.authLogin, remote.authLogin, (body) => local.authLogin(body)),
+  authDemoLogin: authRoute(cloud.authDemoLogin, remote.authDemoLogin, () => local.authDemoLogin()),
   authLogout: authRoute(cloud.authLogout, remote.authLogout, () => local.authLogout()),
   authListUsers: authRoute(cloud.authListUsers, remote.authListUsers, () => local.authListUsers()),
   authAddUser: authRoute(cloud.authAddUser, remote.authAddUser, (body) => local.authAddUser(body)),

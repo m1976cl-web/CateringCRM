@@ -9,6 +9,7 @@ import {
   sha256Hex,
   verifyPassword,
 } from "../../../shared/password";
+import { DEMO_USER_EMAIL, DEMO_USER_NAME, parseDemoLoginFlag } from "../../../shared/demoLogin";
 import { error, now } from "./http";
 
 export type AuthUser = {
@@ -114,6 +115,28 @@ export async function authenticate(email: string, password: string): Promise<Aut
   if (!row) return null;
   const ok = await verifyPassword(password, row.passwordSalt, row.passwordHash);
   return ok ? publicUser(row) : null;
+}
+
+export function isDemoLoginEnabled(): boolean {
+  const netlify = (globalThis as { Netlify?: { env: { get: (name: string) => string | undefined } } })
+    .Netlify;
+  const raw = netlify?.env.get("DEMO_LOGIN") ?? netlify?.env.get("VITE_DEMO_LOGIN");
+  return parseDemoLoginFlag(raw);
+}
+
+export async function loginDemo(): Promise<{ user: AuthUser; token: string }> {
+  let row = await findUserByEmail(DEMO_USER_EMAIL);
+  if (!row) {
+    const user = await createTeamUser({
+      name: DEMO_USER_NAME,
+      email: DEMO_USER_EMAIL,
+      password: randomToken(),
+    });
+    const session = await createSession(user.id);
+    return { user, token: session.token };
+  }
+  const session = await createSession(row.id);
+  return { user: publicUser(row), token: session.token };
 }
 
 export function validateNewPassword(password: string): string | null {
