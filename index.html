@@ -2,14 +2,26 @@
 <html lang="es">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!--github-pages-redirect-->
+    <script>
+      (function () {
+        if (!/\.github\.io$/i.test(location.hostname)) return;
+        var path = location.pathname;
+        if (path.indexOf("/app/") !== -1 || /\/app$/.test(path)) return;
+        var dir = path.replace(/\/index\.html$/i, "/");
+        if (dir.slice(-1) !== "/") dir += "/";
+        location.replace(dir + "app/" + location.search + location.hash);
+      })();
+    </script>
+    <!--/github-pages-redirect-->
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#1f6b4a" />
     <meta name="description" content="CRM simple para catering: clientes, eventos, recetas y compras" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="CateringCRM" />
-    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="./icons/icon-192.png" />
     <title>CateringCRM — administración simple</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
