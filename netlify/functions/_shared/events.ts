@@ -8,6 +8,14 @@ import {
   recipes,
 } from "../../../db/schema";
 import { isEventStatus, isServiceType, type ServiceType } from "../../../shared/types";
+import {
+  defaultPackingItems,
+  parseDietaryTags,
+  parseExpenses,
+  parsePackingItems,
+  parseStaff,
+  parseTimeHm,
+} from "../../../shared/ops";
 import { asNumber, asOptionalString } from "./http";
 
 export async function eventDetail(eventId: number) {
@@ -21,6 +29,15 @@ export async function eventDetail(eventId: number) {
       attendees: events.attendees,
       status: events.status,
       dietaryRestrictions: events.dietaryRestrictions,
+      dietaryTags: events.dietaryTags,
+      setupTime: events.setupTime,
+      serviceTime: events.serviceTime,
+      endTime: events.endTime,
+      venueContact: events.venueContact,
+      venuePhone: events.venuePhone,
+      packingItems: events.packingItems,
+      expenses: events.expenses,
+      staff: events.staff,
       notes: events.notes,
       estimatedCost: events.estimatedCost,
       createdAt: events.createdAt,
@@ -53,6 +70,12 @@ export async function eventDetail(eventId: number) {
 
   return {
     ...row,
+    dietaryTags: parseDietaryTags(row.dietaryTags),
+    packingItems: parsePackingItems(row.packingItems).length
+      ? parsePackingItems(row.packingItems)
+      : defaultPackingItems(),
+    expenses: parseExpenses(row.expenses),
+    staff: parseStaff(row.staff),
     services: services.map((s) => s.serviceType),
     recipes: menu,
   };
@@ -119,6 +142,17 @@ export function parseEventBody(body: Record<string, unknown>) {
     status,
     location: asOptionalString(body.location),
     dietaryRestrictions: asOptionalString(body.dietaryRestrictions),
+    dietaryTags: parseDietaryTags(body.dietaryTags),
+    setupTime: parseTimeHm(body.setupTime),
+    serviceTime: parseTimeHm(body.serviceTime),
+    endTime: parseTimeHm(body.endTime),
+    venueContact: asOptionalString(body.venueContact),
+    venuePhone: asOptionalString(body.venuePhone),
+    packingItems: parsePackingItems(body.packingItems).length
+      ? parsePackingItems(body.packingItems)
+      : defaultPackingItems(),
+    expenses: parseExpenses(body.expenses),
+    staff: parseStaff(body.staff),
     notes: asOptionalString(body.notes),
     estimatedCost:
       body.estimatedCost === null || body.estimatedCost === undefined || body.estimatedCost === ""

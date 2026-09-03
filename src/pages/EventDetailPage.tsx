@@ -31,6 +31,23 @@ import {
   type EventStatus,
   type ServiceType,
 } from "../../shared/types";
+import {
+  DIETARY_TAGS,
+  DIETARY_TAG_LABELS,
+  EXPENSE_CATEGORIES,
+  EXPENSE_CATEGORY_LABELS,
+  STAFF_ROLES,
+  STAFF_ROLE_LABELS,
+  defaultPackingItems,
+  recipeConflicts,
+  sumExpenses,
+  type DietaryTag,
+  type EventExpense,
+  type EventStaff,
+  type ExpenseCategory,
+  type PackingItem,
+  type StaffRole,
+} from "../../shared/ops";
 
 type MenuRow = {
   key: string;
@@ -65,6 +82,15 @@ export function EventDetailPage() {
   const [status, setStatus] = useState<EventStatus>("borrador");
   const [services, setServices] = useState<ServiceType[]>(["almuerzo"]);
   const [dietary, setDietary] = useState("");
+  const [dietaryTags, setDietaryTags] = useState<DietaryTag[]>([]);
+  const [setupTime, setSetupTime] = useState("");
+  const [serviceTime, setServiceTime] = useState("");
+  const [endTime, setEndTime] = useState("");
+  const [venueContact, setVenueContact] = useState("");
+  const [venuePhone, setVenuePhone] = useState("");
+  const [packingItems, setPackingItems] = useState<PackingItem[]>(() => defaultPackingItems());
+  const [expenses, setExpenses] = useState<EventExpense[]>([]);
+  const [staff, setStaff] = useState<EventStaff[]>([]);
   const [notes, setNotes] = useState("");
   const [estimatedCost, setEstimatedCost] = useState("");
   const [menu, setMenu] = useState<MenuRow[]>([]);
@@ -115,6 +141,15 @@ export function EventDetailPage() {
             setStatus("borrador");
             setServices(ev.services);
             setDietary(ev.dietaryRestrictions ?? "");
+            setDietaryTags(ev.dietaryTags ?? []);
+            setSetupTime(ev.setupTime ?? "");
+            setServiceTime(ev.serviceTime ?? "");
+            setEndTime(ev.endTime ?? "");
+            setVenueContact(ev.venueContact ?? "");
+            setVenuePhone(ev.venuePhone ?? "");
+            setPackingItems(ev.packingItems?.length ? ev.packingItems : defaultPackingItems());
+            setExpenses(ev.expenses ?? []);
+            setStaff(ev.staff ?? []);
             setNotes(ev.notes ?? "");
             setEstimatedCost(ev.estimatedCost != null ? String(ev.estimatedCost) : "");
             setMenu(
@@ -144,6 +179,15 @@ export function EventDetailPage() {
           setSavedStatus(ev.status);
           setServices(ev.services);
           setDietary(ev.dietaryRestrictions ?? "");
+          setDietaryTags(ev.dietaryTags ?? []);
+          setSetupTime(ev.setupTime ?? "");
+          setServiceTime(ev.serviceTime ?? "");
+          setEndTime(ev.endTime ?? "");
+          setVenueContact(ev.venueContact ?? "");
+          setVenuePhone(ev.venuePhone ?? "");
+          setPackingItems(ev.packingItems?.length ? ev.packingItems : defaultPackingItems());
+          setExpenses(ev.expenses ?? []);
+          setStaff(ev.staff ?? []);
           setNotes(ev.notes ?? "");
           setEstimatedCost(ev.estimatedCost != null ? String(ev.estimatedCost) : "");
           setMenu(
@@ -242,9 +286,11 @@ export function EventDetailPage() {
     return estimateFoodCost(forCost);
   }, [menu, recipes, ingredients]);
 
+  const extraCost = sumExpenses(expenses);
+  const totalCost = foodCost + extraCost;
   const salePrice = estimatedCost === "" ? 0 : Number(estimatedCost);
   const marginPct =
-    salePrice > 0 && foodCost > 0 ? Math.round(((salePrice - foodCost) / salePrice) * 100) : null;
+    salePrice > 0 && totalCost > 0 ? Math.round(((salePrice - totalCost) / salePrice) * 100) : null;
   const quoteMoneyTotals = useMemo(() => clientMoneyFromQuotes(eventQuotes), [eventQuotes]);
   const latestQuoteMoney = eventQuotes[0] ? quoteMoney(eventQuotes[0]) : null;
 
@@ -272,6 +318,15 @@ export function EventDetailPage() {
       attendees,
       status,
       dietaryRestrictions: dietary || null,
+      dietaryTags,
+      setupTime: setupTime || null,
+      serviceTime: serviceTime || null,
+      endTime: endTime || null,
+      venueContact: venueContact || null,
+      venuePhone: venuePhone || null,
+      packingItems,
+      expenses,
+      staff,
       notes: notes || null,
       estimatedCost: estimatedCost === "" ? null : Number(estimatedCost),
       services,
@@ -511,6 +566,24 @@ export function EventDetailPage() {
             </li>
             <li>
               <span>
+                <strong>Packing</strong>
+                <span className="meta">
+                  {" "}
+                  {packingItems.filter((p) => p.packed).length}/{packingItems.length} listos
+                </span>
+              </span>
+              <span
+                className={`badge ${
+                  packingItems.length && packingItems.every((p) => p.packed)
+                    ? "tone-good"
+                    : "tone-warn"
+                }`}
+              >
+                {packingItems.length && packingItems.every((p) => p.packed) ? "Listo" : "Pendiente"}
+              </span>
+            </li>
+            <li>
+              <span>
                 <strong>Producción</strong>
                 <span className="meta"> Hoja para cocina / servicio</span>
               </span>
@@ -579,6 +652,27 @@ export function EventDetailPage() {
           <input value={location} onChange={(e) => setLocation(e.target.value)} />
         </FormField>
 
+        <div className="grid-3">
+          <FormField label="Montaje" hint="Hora de llegada / setup">
+            <input type="time" value={setupTime} onChange={(e) => setSetupTime(e.target.value)} />
+          </FormField>
+          <FormField label="Servicio">
+            <input type="time" value={serviceTime} onChange={(e) => setServiceTime(e.target.value)} />
+          </FormField>
+          <FormField label="Término">
+            <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} />
+          </FormField>
+        </div>
+
+        <div className="grid-2">
+          <FormField label="Contacto en el recinto">
+            <input value={venueContact} onChange={(e) => setVenueContact(e.target.value)} />
+          </FormField>
+          <FormField label="Teléfono del recinto">
+            <input value={venuePhone} onChange={(e) => setVenuePhone(e.target.value)} />
+          </FormField>
+        </div>
+
         <div className="grid-2">
           <FormField
             label="Se repite"
@@ -638,15 +732,36 @@ export function EventDetailPage() {
             placeholder="Ej. 3 vegetarianos, 1 sin gluten"
           />
         </FormField>
+        <div>
+          <div className="field-label" style={{ marginBottom: 8 }}>
+            Alergias / dietas del evento
+          </div>
+          <div className="chips">
+            {DIETARY_TAGS.map((tag) => (
+              <button
+                key={tag}
+                type="button"
+                className={`chip ${dietaryTags.includes(tag) ? "on" : ""}`}
+                onClick={() =>
+                  setDietaryTags((prev) =>
+                    prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag],
+                  )
+                }
+              >
+                {DIETARY_TAG_LABELS[tag]}
+              </button>
+            ))}
+          </div>
+        </div>
 
         <div className="grid-2">
           <FormField
             label="Costo estimado (venta)"
             hint={
-              foodCost > 0
+              totalCost > 0
                 ? `Costo ingredientes ≈ ${formatMoney(foodCost)}${
-                    marginPct != null ? ` · margen ${marginPct}%` : ""
-                  }. Puedes usarlo como base.`
+                    extraCost > 0 ? ` + extras ${formatMoney(extraCost)}` : ""
+                  }${marginPct != null ? ` · margen ${marginPct}%` : ""}. Puedes usarlo como base.`
                 : "Se calcula solo si los ingredientes tienen precio."
             }
           >
@@ -673,6 +788,213 @@ export function EventDetailPage() {
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} />
           </FormField>
         </div>
+
+        <section>
+          <h3 style={{ marginBottom: 8 }}>Lista de packing / montaje</h3>
+          <p className="meta" style={{ marginTop: 0 }}>
+            Marca lo que ya está listo para cargar. Se imprime también en la hoja de producción.
+          </p>
+          {packingItems.map((item, idx) => (
+            <div key={item.id} className="inline-row" style={{ marginBottom: 8, alignItems: "center" }}>
+              <label className="inline-row" style={{ flex: 1 }}>
+                <input
+                  type="checkbox"
+                  checked={item.packed}
+                  onChange={(e) => {
+                    const next = [...packingItems];
+                    next[idx] = { ...item, packed: e.target.checked };
+                    setPackingItems(next);
+                  }}
+                />
+                <input
+                  value={item.label}
+                  onChange={(e) => {
+                    const next = [...packingItems];
+                    next[idx] = { ...item, label: e.target.value };
+                    setPackingItems(next);
+                  }}
+                />
+              </label>
+              <input
+                type="number"
+                min={1}
+                style={{ maxWidth: 80 }}
+                value={item.quantity}
+                onChange={(e) => {
+                  const next = [...packingItems];
+                  next[idx] = { ...item, quantity: Math.max(1, Number(e.target.value) || 1) };
+                  setPackingItems(next);
+                }}
+              />
+              <button
+                type="button"
+                className="btn danger"
+                onClick={() => setPackingItems(packingItems.filter((_, i) => i !== idx))}
+              >
+                Quitar
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            className="btn"
+            onClick={() =>
+              setPackingItems([
+                ...packingItems,
+                {
+                  id: Math.max(0, ...packingItems.map((p) => p.id)) + 1,
+                  label: "",
+                  quantity: 1,
+                  packed: false,
+                },
+              ])
+            }
+          >
+            Agregar ítem
+          </button>
+        </section>
+
+        <section>
+          <h3 style={{ marginBottom: 8 }}>Gastos del evento</h3>
+          <p className="meta" style={{ marginTop: 0 }}>
+            Transporte, personal extra, arriendo… se restan del precio de venta para ver el margen real.
+            {extraCost > 0 ? ` Extra acumulado: ${formatMoney(extraCost)}.` : ""}
+          </p>
+          {expenses.map((row, idx) => (
+            <div key={row.id} className="inline-row" style={{ marginBottom: 8 }}>
+              <FormField label="Descripción">
+                <input
+                  value={row.description}
+                  onChange={(e) => {
+                    const next = [...expenses];
+                    next[idx] = { ...row, description: e.target.value };
+                    setExpenses(next);
+                  }}
+                />
+              </FormField>
+              <FormField label="Monto">
+                <input
+                  type="number"
+                  min={0}
+                  value={row.amount}
+                  onChange={(e) => {
+                    const next = [...expenses];
+                    next[idx] = { ...row, amount: Math.max(0, Number(e.target.value) || 0) };
+                    setExpenses(next);
+                  }}
+                />
+              </FormField>
+              <FormField label="Tipo">
+                <select
+                  value={row.category}
+                  onChange={(e) => {
+                    const next = [...expenses];
+                    next[idx] = { ...row, category: e.target.value as ExpenseCategory };
+                    setExpenses(next);
+                  }}
+                >
+                  {EXPENSE_CATEGORIES.map((c) => (
+                    <option key={c} value={c}>
+                      {EXPENSE_CATEGORY_LABELS[c]}
+                    </option>
+                  ))}
+                </select>
+              </FormField>
+              <button
+                type="button"
+                className="btn danger"
+                onClick={() => setExpenses(expenses.filter((_, i) => i !== idx))}
+              >
+                Quitar
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            className="btn"
+            onClick={() =>
+              setExpenses([
+                ...expenses,
+                {
+                  id: Math.max(0, ...expenses.map((x) => x.id)) + 1,
+                  description: "",
+                  amount: 0,
+                  category: "otro",
+                },
+              ])
+            }
+          >
+            Agregar gasto
+          </button>
+        </section>
+
+        <section>
+          <h3 style={{ marginBottom: 8 }}>Personal del servicio</h3>
+          {staff.map((row, idx) => (
+            <div key={row.id} className="inline-row" style={{ marginBottom: 8 }}>
+              <FormField label="Nombre">
+                <input
+                  value={row.name}
+                  onChange={(e) => {
+                    const next = [...staff];
+                    next[idx] = { ...row, name: e.target.value };
+                    setStaff(next);
+                  }}
+                />
+              </FormField>
+              <FormField label="Rol">
+                <select
+                  value={row.role}
+                  onChange={(e) => {
+                    const next = [...staff];
+                    next[idx] = { ...row, role: e.target.value as StaffRole };
+                    setStaff(next);
+                  }}
+                >
+                  {STAFF_ROLES.map((r) => (
+                    <option key={r} value={r}>
+                      {STAFF_ROLE_LABELS[r]}
+                    </option>
+                  ))}
+                </select>
+              </FormField>
+              <FormField label="Notas">
+                <input
+                  value={row.notes ?? ""}
+                  onChange={(e) => {
+                    const next = [...staff];
+                    next[idx] = { ...row, notes: e.target.value || null };
+                    setStaff(next);
+                  }}
+                />
+              </FormField>
+              <button
+                type="button"
+                className="btn danger"
+                onClick={() => setStaff(staff.filter((_, i) => i !== idx))}
+              >
+                Quitar
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            className="btn"
+            onClick={() =>
+              setStaff([
+                ...staff,
+                {
+                  id: Math.max(0, ...staff.map((x) => x.id)) + 1,
+                  name: "",
+                  role: "servicio",
+                  notes: null,
+                },
+              ])
+            }
+          >
+            Agregar persona
+          </button>
+        </section>
 
         <section className="menu-planner">
           <div className="page-header" style={{ marginBottom: 12 }}>
@@ -737,6 +1059,9 @@ export function EventDetailPage() {
                           recipe && recipe.yieldPortions > 0
                             ? row.portions / recipe.yieldPortions
                             : 1;
+                        const conflicts = recipe
+                          ? recipeConflicts(recipe.allergenTags ?? [], dietaryTags)
+                          : [];
                         return (
                           <div key={row.key} className="menu-row">
                             <FormField label="Receta">
@@ -757,6 +1082,12 @@ export function EventDetailPage() {
                                 ))}
                               </select>
                             </FormField>
+                            {conflicts.length ? (
+                              <p className="error-inline" style={{ margin: "0 0 8px" }}>
+                                Conflicto con dieta del evento:{" "}
+                                {conflicts.map((t) => DIETARY_TAG_LABELS[t]).join(", ")}
+                              </p>
+                            ) : null}
                             <FormField
                               label="Porciones"
                               hint={

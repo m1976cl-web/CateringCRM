@@ -60,6 +60,8 @@ export const recipes = pgTable("recipes", {
   suitableServices: jsonb("suitable_services").$type<ServiceType[]>().notNull().default([]),
   instructions: text("instructions"),
   estimatedCost: doublePrecision("estimated_cost"),
+  imageUrl: text("image_url"),
+  allergenTags: jsonb("allergen_tags").$type<string[]>().notNull().default([]),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -86,6 +88,15 @@ export const events = pgTable("events", {
   attendees: integer("attendees").notNull().default(1),
   status: varchar("status", { length: 40 }).$type<EventStatus>().notNull().default("borrador"),
   dietaryRestrictions: text("dietary_restrictions"),
+  dietaryTags: jsonb("dietary_tags").$type<string[]>().notNull().default([]),
+  setupTime: varchar("setup_time", { length: 8 }),
+  serviceTime: varchar("service_time", { length: 8 }),
+  endTime: varchar("end_time", { length: 8 }),
+  venueContact: varchar("venue_contact", { length: 160 }),
+  venuePhone: varchar("venue_phone", { length: 40 }),
+  packingItems: jsonb("packing_items").$type<unknown[]>().notNull().default([]),
+  expenses: jsonb("expenses").$type<unknown[]>().notNull().default([]),
+  staff: jsonb("staff").$type<unknown[]>().notNull().default([]),
   notes: text("notes"),
   estimatedCost: doublePrecision("estimated_cost"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -125,6 +136,11 @@ export const quotes = pgTable("quotes", {
   status: varchar("status", { length: 40 }).$type<QuoteStatus>().notNull().default("borrador"),
   depositAmount: doublePrecision("deposit_amount").notNull().default(0),
   foodCost: doublePrecision("food_cost").notNull().default(0),
+  version: integer("version").notNull().default(1),
+  parentQuoteId: integer("parent_quote_id"),
+  publicToken: varchar("public_token", { length: 64 }).unique(),
+  dueDate: timestamp("due_date"),
+  lastContactedAt: timestamp("last_contacted_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -147,6 +163,7 @@ export const teamUsers = pgTable("team_users", {
   name: varchar("name", { length: 160 }).notNull(),
   passwordSalt: varchar("password_salt", { length: 64 }).notNull(),
   passwordHash: varchar("password_hash", { length: 128 }).notNull(),
+  role: varchar("role", { length: 20 }).notNull().default("admin"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -191,6 +208,15 @@ export const shoppingListItems = pgTable("shopping_list_items", {
   quantity: doublePrecision("quantity").notNull(),
   unit: varchar("unit", { length: 20 }).$type<IngredientUnit>().notNull(),
   purchased: boolean("purchased").notNull().default(false),
+});
+
+export const ingredientPrices = pgTable("ingredient_prices", {
+  id: serial().primaryKey(),
+  ingredientId: integer("ingredient_id")
+    .notNull()
+    .references(() => ingredients.id, { onDelete: "cascade" }),
+  unitPrice: doublePrecision("unit_price").notNull(),
+  recordedAt: timestamp("recorded_at").notNull().defaultNow(),
 });
 
 export type ClientRow = typeof clients.$inferSelect;

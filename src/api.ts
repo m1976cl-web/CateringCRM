@@ -1,3 +1,5 @@
+import type { DietaryTag, EventExpense, EventStaff, PackingItem } from "../shared/ops";
+import type { TeamRole } from "../shared/roles";
 import { unpackRecipeCategory } from "../shared/recipeMeta";
 import type {
   ClientInput,
@@ -16,6 +18,7 @@ import type {
 } from "../shared/types";
 import { local } from "./localStore";
 import { notifyOfflineFallback } from "./offlineBanner";
+import type { PublicQuoteView } from "./publicQuote";
 import { getSessionToken } from "./session";
 import { isSupabaseConfigured } from "./supabase";
 import { cloud } from "./supabaseStore";
@@ -42,6 +45,7 @@ export type Ingredient = {
   supplierName?: string | null;
   createdAt: string;
   updatedAt: string;
+  priceHistory?: Array<{ id: number; unitPrice: number; recordedAt: string }>;
 };
 
 export type Recipe = {
@@ -52,6 +56,8 @@ export type Recipe = {
   suitableServices: ServiceType[];
   instructions: string | null;
   estimatedCost: number | null;
+  imageUrl: string | null;
+  allergenTags: DietaryTag[];
   ingredients: Array<{
     id: number;
     ingredientId: number;
@@ -63,11 +69,13 @@ export type Recipe = {
   updatedAt: string;
 };
 
-function normalizeRecipe(raw: Omit<Recipe, "suitableServices"> & { suitableServices?: ServiceType[] }): Recipe {
+function normalizeRecipe(raw: Omit<Recipe, "suitableServices"> & { suitableServices?: ServiceType[]; imageUrl?: string | null; allergenTags?: string[] }): Recipe {
   const unpacked = unpackRecipeCategory(raw.category);
   const fromCol = raw.suitableServices?.length ? raw.suitableServices : [];
   return {
     ...raw,
+    imageUrl: raw.imageUrl ?? null,
+    allergenTags: Array.isArray(raw.allergenTags) ? (raw.allergenTags as DietaryTag[]) : [],
     category: unpacked.category ?? (raw.category?.startsWith("svc:") ? null : raw.category),
     suitableServices: fromCol.length ? fromCol : unpacked.suitableServices,
   };
@@ -95,10 +103,21 @@ export type EventSummary = {
   estimatedCost: number | null;
   clientName: string;
   services: ServiceType[];
+  setupTime?: string | null;
+  serviceTime?: string | null;
 };
 
 export type EventDetail = EventSummary & {
   dietaryRestrictions: string | null;
+  dietaryTags: DietaryTag[];
+  setupTime: string | null;
+  serviceTime: string | null;
+  endTime: string | null;
+  venueContact: string | null;
+  venuePhone: string | null;
+  packingItems: PackingItem[];
+  expenses: EventExpense[];
+  staff: EventStaff[];
   notes: string | null;
   recipes: Array<{
     id: number;
@@ -129,6 +148,11 @@ export type QuoteSummary = {
   clientName: string;
   clientPhone: string | null;
   createdAt: string;
+  version: number;
+  parentQuoteId: number | null;
+  publicToken: string | null;
+  dueDate: string | null;
+  lastContactedAt: string | null;
 };
 
 export type QuoteDetail = QuoteSummary & {
@@ -185,6 +209,7 @@ export type AuthUser = {
   id: number;
   email: string;
   name: string;
+  role: TeamRole;
 };
 
 export type AuthStatus = {
@@ -197,11 +222,14 @@ export type AuthStatus = {
 export type DataMode = "supabase" | "netlify" | "static";
 
 const STATIC_ONLY = import.meta.env.VITE_STATIC_ONLY === "true";
-const USE_SUPABASE = isSupabaseConfigured();
+
+function usingSupabase(): boolean {
+  return isSupabaseConfigured();
+}
 
 /** Backend activo: Supabase (nube) > Netlify API > localStorage. */
 export function getDataMode(): DataMode {
-  if (USE_SUPABASE) return "supabase";
+  if (usingSupabase()) return "supabase";
   if (STATIC_ONLY) return "static";
   return "netlify";
 }
@@ -219,7 +247,7 @@ export function getDataModeLabel(mode: DataMode = getDataMode()): string {
 
 /** true si se puede borrar todo (local o Supabase). En API Netlify no hay wipe. */
 export function canClearAllData(): boolean {
-  return USE_SUPABASE || STATIC_ONLY;
+  return usingSupabase() || STATIC_ONLY;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -247,7 +275,7 @@ function authRoute<Args extends unknown[], T>(
   localFn: (...args: Args) => T | Promise<T>,
 ): (...args: Args) => Promise<T> {
   return async (...args: Args) => {
-    if (USE_SUPABASE) return cloudFn(...args);
+    if (usingSupabase()) return cloudFn(...args);
     if (STATIC_ONLY) return await localFn(...args);
     return await remoteFn(...args);
   };
@@ -259,7 +287,7 @@ function route<Args extends unknown[], T>(
   localFn: (...args: Args) => T | Promise<T>,
 ): (...args: Args) => Promise<T> {
   return async (...args: Args) => {
-    if (USE_SUPABASE) return cloudFn(...args);
+    if (usingSupabase()) return cloudFn(...args);
     if (STATIC_ONLY) return await localFn(...args);
     try {
       return await remoteFn(...args);
@@ -341,6 +369,15 @@ const remote = {
     request<QuoteDetail>(`/api/quotes/${id}`, { method: "PUT", body: JSON.stringify(body) }),
   deleteQuote: (id: number) =>
     request<{ ok: boolean }>(`/api/quotes/${id}`, { method: "DELETE" }),
+  duplicateQuote: (id: number) =>
+    request<QuoteDetail>(`/api/quotes/${id}/version`, { method: "POST" }),
+  getPublicQuote: (token: string) =>
+    request<PublicQuoteView>(`/api/public/quotes/${encodeURIComponent(token)}`),
+  respondPublicQuote: (token: string, action: "accept" | "reject") =>
+    request<PublicQuoteView>(`/api/public/quotes/${encodeURIComponent(token)}`, {
+      method: "POST",
+      body: JSON.stringify({ action }),
+    }),
 
   authStatus: () => request<AuthStatus>("/api/auth?action=status"),
   authSetup: (body: { name: string; email: string; password: string }) =>
@@ -381,6 +418,13 @@ const remote = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  authUpdateRole: async (userId: number, role: TeamRole) => {
+    const res = await request<{ user: AuthUser }>("/api/auth?action=role", {
+      method: "PATCH",
+      body: JSON.stringify({ userId, role }),
+    });
+    return res.user;
+  },
 };
 
 export const api = {
@@ -466,6 +510,35 @@ export const api = {
     local.updateQuote(id, body),
   ),
   deleteQuote: route(cloud.deleteQuote, remote.deleteQuote, (id) => local.deleteQuote(id)),
+  duplicateQuote: route(cloud.duplicateQuote, remote.duplicateQuote, (id) => local.duplicateQuote(id)),
+  getPublicQuote: async (token: string) => {
+    const t = decodeURIComponent(String(token ?? "")).trim();
+    try {
+      return local.getPublicQuote(t);
+    } catch (localErr) {
+      if (usingSupabase()) return cloud.getPublicQuote(t);
+      if (STATIC_ONLY) throw localErr;
+      try {
+        return await remote.getPublicQuote(t);
+      } catch {
+        throw localErr;
+      }
+    }
+  },
+  respondPublicQuote: async (token: string, action: "accept" | "reject") => {
+    const t = decodeURIComponent(String(token ?? "")).trim();
+    try {
+      return local.respondPublicQuote(t, action);
+    } catch (localErr) {
+      if (usingSupabase()) return cloud.respondPublicQuote(t, action);
+      if (STATIC_ONLY) throw localErr;
+      try {
+        return await remote.respondPublicQuote(t, action);
+      } catch {
+        throw localErr;
+      }
+    }
+  },
 
   authStatus: authRoute(cloud.authStatus, remote.authStatus, () => local.authStatus()),
   authSetup: authRoute(cloud.authSetup, remote.authSetup, (body) => local.authSetup(body)),
@@ -493,9 +566,14 @@ export const api = {
     () => local.authIssueRecoveryCode(),
   ),
   authRecover: authRoute(cloud.authRecover, remote.authRecover, (body) => local.authRecover(body)),
+  authUpdateRole: authRoute(
+    (id, role) => cloud.updateUserRole(id, role),
+    remote.authUpdateRole,
+    (id, role) => local.updateUserRole(id, role),
+  ),
 
   isEmpty: async (): Promise<boolean> => {
-    if (USE_SUPABASE) return cloud.isEmpty();
+    if (usingSupabase()) return cloud.isEmpty();
     if (STATIC_ONLY) return local.isEmpty();
     try {
       const d = await remote.dashboard();
@@ -510,7 +588,7 @@ export const api = {
   },
 
   clearAll: async (): Promise<{ ok: boolean }> => {
-    if (USE_SUPABASE) return cloud.clearAll();
+    if (usingSupabase()) return cloud.clearAll();
     if (STATIC_ONLY) return local.clearAll();
     throw new Error(
       "En modo servidor no se pueden borrar todos los datos desde aquí. Usa la base de datos o cambia a modo local/nube.",

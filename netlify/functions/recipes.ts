@@ -50,6 +50,8 @@ export default async (req: Request, _context: Context) => {
         ? body.suitableServices
         : [],
       instructions: asOptionalString(body.instructions),
+      imageUrl: asOptionalString(body.imageUrl),
+      allergenTags: Array.isArray(body.allergenTags) ? body.allergenTags : [],
       estimatedCost:
         body.estimatedCost === null || body.estimatedCost === undefined || body.estimatedCost === ""
           ? null

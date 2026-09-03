@@ -6,6 +6,12 @@ import { PageHeader } from "../components/EmptyState";
 import { FormField } from "../components/FormField";
 import { loadCompanySettings, saveCompanySettings, type CompanySettings } from "../settings";
 import { isDemoUserEmail } from "../../shared/demoLogin";
+import { canManageUsers, TEAM_ROLE_LABELS, TEAM_ROLES, type TeamRole } from "../../shared/roles";
+import {
+  getEnvCloudConfig,
+  getRuntimeCloudConfig,
+  saveRuntimeCloudConfig,
+} from "../supabase";
 
 export function SettingsPage() {
   const mode = getDataMode();
@@ -25,6 +31,12 @@ export function SettingsPage() {
   const [removeUser, setRemoveUser] = useState<AuthUser | null>(null);
   const [recoveryCode, setRecoveryCode] = useState<string | null>(null);
   const [hasRecovery, setHasRecovery] = useState(false);
+  const [cloudUrl, setCloudUrl] = useState(
+    () => getRuntimeCloudConfig()?.url || getEnvCloudConfig().url,
+  );
+  const [cloudKey, setCloudKey] = useState(() => getRuntimeCloudConfig()?.anonKey ?? "");
+  const [newRole, setNewRole] = useState<TeamRole>("ventas");
+  const canUsers = canManageUsers(user.role);
 
   useEffect(() => {
     void (async () => {
@@ -49,6 +61,11 @@ export function SettingsPage() {
     e.preventDefault();
     try {
       await api.authAddUser({ name: newName, email: newEmail, password: newPassword });
+      const list = await api.authListUsers();
+      const created = list.find((u) => u.email === newEmail.trim().toLowerCase());
+      if (created && created.role !== newRole) {
+        await api.authUpdateRole(created.id, newRole);
+      }
       setUsers(await api.authListUsers());
       setNewName("");
       setNewEmail("");
@@ -151,6 +168,34 @@ export function SettingsPage() {
     }
   }
 
+  function saveCloud(e: React.FormEvent) {
+    e.preventDefault();
+    const url = cloudUrl.trim();
+    const anonKey = cloudKey.trim();
+    if (!url || !anonKey) {
+      setError("Indica la URL y la clave anónima de Supabase.");
+      return;
+    }
+    saveRuntimeCloudConfig({ url, anonKey });
+    window.location.reload();
+  }
+
+  function disconnectCloud() {
+    saveRuntimeCloudConfig(null);
+    window.location.reload();
+  }
+
+  async function changeRole(id: number, role: TeamRole) {
+    try {
+      await api.authUpdateRole(id, role);
+      setUsers(await api.authListUsers());
+      setMsg("Rol actualizado.");
+      setError("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo cambiar el rol");
+    }
+  }
+
   return (
     <div>
       <PageHeader
@@ -169,19 +214,8 @@ export function SettingsPage() {
           {mode === "static" ? (
             <div className="banner banner-warn" style={{ marginTop: 12 }}>
               <p style={{ margin: "0 0 8px" }}>
-                En GitHub Pages sin nube, cada celular guarda sus propios datos. Para compartir:
-              </p>
-              <ol className="checklist">
-                <li>Crea un proyecto gratis en supabase.com</li>
-                <li>Ejecuta el SQL de <code>supabase/migrations/</code> en el SQL Editor</li>
-                <li>
-                  En GitHub → Settings → Secrets: <code>VITE_SUPABASE_URL</code> y{" "}
-                  <code>VITE_SUPABASE_ANON_KEY</code>
-                </li>
-                <li>Vuelve a publicar Pages (push a main)</li>
-              </ol>
-              <p className="meta" style={{ marginBottom: 0 }}>
-                Detalle completo en el README del repositorio.
+                En GitHub Pages sin nube, cada celular guarda sus propios datos. Pega aquí la URL y
+                la clave anónima de Supabase (no hace falta secretos de GitHub).
               </p>
             </div>
           ) : mode === "supabase" ? (
@@ -190,6 +224,41 @@ export function SettingsPage() {
             <p className="meta">Usando el servidor Netlify / base Postgres.</p>
           )}
         </section>
+
+        <form className="panel form-grid" onSubmit={saveCloud}>
+          <h2>Conectar nube (Supabase)</h2>
+          <p className="meta">
+            En Project Settings → API copia Project URL y la clave <code>anon public</code>. Hay que
+            ejecutar el SQL de <code>supabase/migrations/</code> (hasta <code>008</code>) en el
+            editor. La clave queda en este navegador.
+          </p>
+          <FormField label="Project URL">
+            <input
+              value={cloudUrl}
+              onChange={(e) => setCloudUrl(e.target.value)}
+              placeholder="https://xxxx.supabase.co"
+              autoComplete="off"
+            />
+          </FormField>
+          <FormField label="Anon key">
+            <input
+              value={cloudKey}
+              onChange={(e) => setCloudKey(e.target.value)}
+              placeholder="eyJ..."
+              autoComplete="off"
+            />
+          </FormField>
+          <div className="form-actions">
+            <button type="submit" className="btn primary">
+              Guardar y recargar
+            </button>
+            {getRuntimeCloudConfig() ? (
+              <button type="button" className="btn ghost" onClick={disconnectCloud}>
+                Quitar conexión de este dispositivo
+              </button>
+            ) : null}
+          </div>
+        </form>
 
         <form className="panel form-grid" onSubmit={saveCompany}>
           <h2>Datos para cotizaciones</h2>
@@ -286,8 +355,23 @@ export function SettingsPage() {
                     {u.name} · {u.email}
                     {u.id === user.id ? " (tú)" : ""}
                     {isDemoUserEmail(u.email) ? " · acceso de prueba" : ""}
+                    {canUsers && u.id !== user.id ? (
+                      <select
+                        value={u.role}
+                        style={{ marginLeft: 8 }}
+                        onChange={(e) => void changeRole(u.id, e.target.value as TeamRole)}
+                      >
+                        {TEAM_ROLES.map((r) => (
+                          <option key={r} value={r}>
+                            {TEAM_ROLE_LABELS[r]}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span className="meta"> · {TEAM_ROLE_LABELS[u.role ?? "admin"]}</span>
+                    )}
                   </span>
-                  {u.id !== user.id ? (
+                  {canUsers && u.id !== user.id ? (
                     <span className="page-actions">
                       <button
                         type="button"
@@ -339,6 +423,7 @@ export function SettingsPage() {
               </div>
             </form>
           ) : null}
+          {canUsers ? (
           <form className="form-grid" onSubmit={(e) => void addUser(e)}>
             <FormField label="Nombre">
               <input value={newName} onChange={(e) => setNewName(e.target.value)} required />
@@ -361,10 +446,22 @@ export function SettingsPage() {
                 autoComplete="new-password"
               />
             </FormField>
+            <FormField label="Rol">
+              <select value={newRole} onChange={(e) => setNewRole(e.target.value as TeamRole)}>
+                {TEAM_ROLES.map((r) => (
+                  <option key={r} value={r}>
+                    {TEAM_ROLE_LABELS[r]}
+                  </option>
+                ))}
+              </select>
+            </FormField>
             <button type="submit" className="btn primary">
               Agregar persona
             </button>
           </form>
+          ) : (
+            <p className="meta">Solo administración puede agregar o quitar personas.</p>
+          )}
         </section>
 
         <section className="panel">

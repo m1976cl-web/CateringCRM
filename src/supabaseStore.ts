@@ -19,7 +19,16 @@ import {
   paymentsFromQuoteInput,
   sumPayments,
 } from "../shared/quoteLifecycle";
-import { hashPassword, normalizeRecoveryCode, randomRecoveryCode } from "../shared/password";
+import { hashPassword, normalizeRecoveryCode, randomRecoveryCode, randomToken } from "../shared/password";
+import {
+  defaultPackingItems,
+  parseDietaryTags,
+  parseExpenses,
+  parsePackingItems,
+  parseStaff,
+  parseTimeHm,
+} from "../shared/ops";
+import { normalizeRole } from "../shared/roles";
 import { parseDemoLoginFlag } from "../shared/demoLogin";
 import type {
   AuthUser,
@@ -35,6 +44,7 @@ import type {
   ShoppingList,
   Supplier,
 } from "./api";
+import type { PublicQuoteView } from "./publicQuote";
 import { getSupabase } from "./supabase";
 
 type ClientRow = {
@@ -78,6 +88,8 @@ type RecipeRow = {
   suitable_services?: ServiceType[] | null;
   instructions: string | null;
   estimated_cost: number | null;
+  image_url?: string | null;
+  allergen_tags?: string[] | null;
   created_at: string;
   updated_at: string;
 };
@@ -98,6 +110,15 @@ type EventRow = {
   attendees: number;
   status: EventStatus;
   dietary_restrictions: string | null;
+  dietary_tags?: string[] | null;
+  setup_time?: string | null;
+  service_time?: string | null;
+  end_time?: string | null;
+  venue_contact?: string | null;
+  venue_phone?: string | null;
+  packing_items?: unknown;
+  expenses?: unknown;
+  staff?: unknown;
   notes: string | null;
   estimated_cost: number | null;
   created_at: string;
@@ -115,6 +136,11 @@ type QuoteRow = {
   status: QuoteStatus;
   deposit_amount?: number | null;
   food_cost?: number | null;
+  version?: number | null;
+  parent_quote_id?: number | null;
+  public_token?: string | null;
+  due_date?: string | null;
+  last_contacted_at?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -128,7 +154,7 @@ type QuotePaymentRow = {
   notes: string | null;
 };
 
-type AuthRpcUser = { id: number; email: string; name: string };
+type AuthRpcUser = { id: number; email: string; name: string; role?: string | null };
 type AuthRpcSession = { user: AuthRpcUser; token: string };
 
 type ShoppingListRow = {
@@ -238,8 +264,8 @@ async function rpcJson<T>(fn: string, args: Record<string, unknown> = {}): Promi
   return data as T;
 }
 
-function toPublicUser(row: { id: number; email: string; name: string }): AuthUser {
-  return { id: row.id, email: row.email, name: row.name };
+function toPublicUser(row: { id: number; email: string; name: string; role?: string | null }): AuthUser {
+  return { id: row.id, email: row.email, name: row.name, role: normalizeRole(row.role) };
 }
 
 function mapClient(row: ClientRow): Client {
@@ -268,7 +294,11 @@ function mapSupplier(row: SupplierRow): Supplier {
   };
 }
 
-function mapIngredient(row: IngredientRow, supplierName?: string | null): Ingredient {
+function mapIngredient(
+  row: IngredientRow,
+  supplierName?: string | null,
+  priceHistory: Ingredient["priceHistory"] = [],
+): Ingredient {
   return {
     id: row.id,
     name: row.name,
@@ -279,6 +309,17 @@ function mapIngredient(row: IngredientRow, supplierName?: string | null): Ingred
     supplierName: supplierName ?? null,
     createdAt: iso(row.created_at),
     updatedAt: iso(row.updated_at),
+    priceHistory,
+  };
+}
+
+function quoteMeta(q: QuoteRow) {
+  return {
+    version: q.version ?? 1,
+    parentQuoteId: q.parent_quote_id ?? null,
+    publicToken: q.public_token ?? null,
+    dueDate: q.due_date ? iso(q.due_date) : null,
+    lastContactedAt: q.last_contacted_at ? iso(q.last_contacted_at) : null,
   };
 }
 
@@ -307,6 +348,8 @@ async function loadRecipe(id: number): Promise<Recipe> {
     suitableServices: recipe.suitable_services ?? [],
     instructions: recipe.instructions,
     estimatedCost: recipe.estimated_cost,
+    imageUrl: recipe.image_url ?? null,
+    allergenTags: parseDietaryTags(recipe.allergen_tags),
     ingredients: (links as RecipeIngredientRow[]).map((l) => {
       const cat = byId.get(l.ingredient_id);
       return {
@@ -353,6 +396,17 @@ async function loadEventDetail(id: number): Promise<EventDetail> {
       (s) => s.service_type,
     ),
     dietaryRestrictions: ev.dietary_restrictions,
+    dietaryTags: parseDietaryTags(ev.dietary_tags),
+    setupTime: ev.setup_time ?? null,
+    serviceTime: ev.service_time ?? null,
+    endTime: ev.end_time ?? null,
+    venueContact: ev.venue_contact ?? null,
+    venuePhone: ev.venue_phone ?? null,
+    packingItems: parsePackingItems(ev.packing_items).length
+      ? parsePackingItems(ev.packing_items)
+      : defaultPackingItems(),
+    expenses: parseExpenses(ev.expenses),
+    staff: parseStaff(ev.staff),
     notes: ev.notes,
     recipes: ((recipes as Array<{
       id: number;
@@ -671,11 +725,28 @@ export const cloud = {
     const supplierIds = [
       ...new Set(rows.map((r) => r.supplier_id).filter((id): id is number => id != null)),
     ];
-    const { data: suppliers } = supplierIds.length
-      ? await db.from("suppliers").select("id, name").in("id", supplierIds)
-      : { data: [] as Array<{ id: number; name: string }> };
+    const [{ data: suppliers }, { data: prices }] = await Promise.all([
+      supplierIds.length
+        ? db.from("suppliers").select("id, name").in("id", supplierIds)
+        : Promise.resolve({ data: [] as Array<{ id: number; name: string }> }),
+      db.from("ingredient_prices").select("id, ingredient_id, unit_price, recorded_at"),
+    ]);
     const names = new Map((suppliers ?? []).map((s) => [s.id, s.name]));
-    return rows.map((r) => mapIngredient(r, r.supplier_id ? names.get(r.supplier_id) : null));
+    const history = new Map<number, NonNullable<Ingredient["priceHistory"]>>();
+    for (const p of (prices as Array<{
+      id: number;
+      ingredient_id: number;
+      unit_price: number;
+      recorded_at: string;
+    }> | null) ?? []) {
+      const list = history.get(p.ingredient_id) ?? [];
+      list.push({ id: p.id, unitPrice: p.unit_price, recordedAt: iso(p.recorded_at) });
+      history.set(p.ingredient_id, list);
+    }
+    for (const list of history.values()) list.sort((a, b) => a.recordedAt.localeCompare(b.recordedAt));
+    return rows.map((r) =>
+      mapIngredient(r, r.supplier_id ? names.get(r.supplier_id) : null, history.get(r.id) ?? []),
+    );
   },
 
   async createIngredient(body: IngredientInput): Promise<Ingredient> {
@@ -704,13 +775,28 @@ export const cloud = {
   },
 
   async updateIngredient(id: number, body: IngredientInput): Promise<Ingredient> {
-    const { data, error } = await getSupabase()
+    const db = getSupabase();
+    const { data: current, error: curErr } = await db
+      .from("ingredients")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
+    const prev = assertOk(current as IngredientRow | null, curErr, "Ingrediente no encontrado");
+    const nextPrice = body.unitPrice ?? null;
+    if (nextPrice != null && nextPrice !== (prev.unit_price ?? null)) {
+      const { error: histErr } = await db.from("ingredient_prices").insert({
+        ingredient_id: id,
+        unit_price: nextPrice,
+      });
+      if (histErr) throw new Error(histErr.message);
+    }
+    const { data, error } = await db
       .from("ingredients")
       .update({
         name: body.name,
         unit: body.unit,
         supplier_id: body.supplierId ?? null,
-        unit_price: body.unitPrice ?? null,
+        unit_price: nextPrice,
         stock_qty: body.stockQty ?? 0,
         updated_at: new Date().toISOString(),
       })
@@ -720,14 +806,23 @@ export const cloud = {
     const row = assertOk(data as IngredientRow | null, error, "Ingrediente no encontrado");
     let supplierName: string | null = null;
     if (row.supplier_id) {
-      const { data: s } = await getSupabase()
-        .from("suppliers")
-        .select("name")
-        .eq("id", row.supplier_id)
-        .maybeSingle();
+      const { data: s } = await db.from("suppliers").select("name").eq("id", row.supplier_id).maybeSingle();
       supplierName = (s as { name: string } | null)?.name ?? null;
     }
-    return mapIngredient(row, supplierName);
+    const { data: prices } = await db
+      .from("ingredient_prices")
+      .select("id, unit_price, recorded_at")
+      .eq("ingredient_id", id)
+      .order("recorded_at");
+    return mapIngredient(
+      row,
+      supplierName,
+      ((prices as Array<{ id: number; unit_price: number; recorded_at: string }> | null) ?? []).map((p) => ({
+        id: p.id,
+        unitPrice: p.unit_price,
+        recordedAt: iso(p.recorded_at),
+      })),
+    );
   },
 
   async deleteIngredient(id: number): Promise<{ ok: boolean }> {
@@ -762,6 +857,8 @@ export const cloud = {
         suitable_services: body.suitableServices ?? [],
         instructions: body.instructions ?? null,
         estimated_cost: body.estimatedCost ?? null,
+        image_url: body.imageUrl ?? null,
+        allergen_tags: parseDietaryTags(body.allergenTags),
       })
       .select("*")
       .single();
@@ -781,6 +878,8 @@ export const cloud = {
         suitable_services: body.suitableServices ?? [],
         instructions: body.instructions ?? null,
         estimated_cost: body.estimatedCost ?? null,
+        image_url: body.imageUrl ?? null,
+        allergen_tags: parseDietaryTags(body.allergenTags),
         updated_at: new Date().toISOString(),
       })
       .eq("id", id)
@@ -836,6 +935,8 @@ export const cloud = {
       estimatedCost: ev.estimated_cost,
       clientName: clientName.get(ev.client_id) ?? "—",
       services: servicesByEvent.get(ev.id) ?? [],
+      setupTime: ev.setup_time ?? null,
+      serviceTime: ev.service_time ?? null,
     }));
   },
 
@@ -860,6 +961,17 @@ export const cloud = {
         attendees: body.attendees,
         status: body.status,
         dietary_restrictions: body.dietaryRestrictions ?? null,
+        dietary_tags: parseDietaryTags(body.dietaryTags),
+        setup_time: parseTimeHm(body.setupTime),
+        service_time: parseTimeHm(body.serviceTime),
+        end_time: parseTimeHm(body.endTime),
+        venue_contact: body.venueContact ?? null,
+        venue_phone: body.venuePhone ?? null,
+        packing_items: parsePackingItems(body.packingItems).length
+          ? parsePackingItems(body.packingItems)
+          : defaultPackingItems(),
+        expenses: parseExpenses(body.expenses),
+        staff: parseStaff(body.staff),
         notes: body.notes ?? null,
         estimated_cost: body.estimatedCost ?? null,
       })
@@ -881,6 +993,17 @@ export const cloud = {
         attendees: body.attendees,
         status: body.status,
         dietary_restrictions: body.dietaryRestrictions ?? null,
+        dietary_tags: parseDietaryTags(body.dietaryTags),
+        setup_time: parseTimeHm(body.setupTime),
+        service_time: parseTimeHm(body.serviceTime),
+        end_time: parseTimeHm(body.endTime),
+        venue_contact: body.venueContact ?? null,
+        venue_phone: body.venuePhone ?? null,
+        packing_items: parsePackingItems(body.packingItems).length
+          ? parsePackingItems(body.packingItems)
+          : defaultPackingItems(),
+        expenses: parseExpenses(body.expenses),
+        staff: parseStaff(body.staff),
         notes: body.notes ?? null,
         estimated_cost: body.estimatedCost ?? null,
         updated_at: new Date().toISOString(),
@@ -1112,6 +1235,7 @@ export const cloud = {
         clientName: ev ? (clientName.get(ev.client_id) ?? "—") : "—",
         clientPhone: ev ? (clientPhone.get(ev.client_id) ?? null) : null,
         createdAt: iso(q.created_at),
+        ...quoteMeta(q),
       };
     });
   },
@@ -1150,12 +1274,13 @@ export const cloud = {
       clientPhone: c?.phone ?? null,
       clientCompany: c?.company ?? null,
       updatedAt: iso(q.updated_at),
+      ...quoteMeta(q),
     };
   },
 
   async createQuote(body: QuoteInput): Promise<QuoteDetail> {
     const db = getSupabase();
-    const { data: ev } = await db.from("events").select("id").eq("id", body.eventId).maybeSingle();
+    const { data: ev } = await db.from("events").select("id, event_date").eq("id", body.eventId).maybeSingle();
     if (!ev) fail("Debes vincular la cotización a un evento");
 
     const { data, error } = await db
@@ -1170,6 +1295,9 @@ export const cloud = {
         status: body.status,
         deposit_amount: 0,
         food_cost: Math.max(0, Math.round(Number(body.foodCost) || 0)),
+        version: 1,
+        public_token: randomToken().slice(0, 32),
+        due_date: body.dueDate ?? (ev as { event_date?: string }).event_date ?? null,
       })
       .select("*")
       .single();
@@ -1180,19 +1308,22 @@ export const cloud = {
   },
 
   async updateQuote(id: number, body: QuoteInput): Promise<QuoteDetail> {
+    const patch: Record<string, unknown> = {
+      event_id: body.eventId,
+      quote_number: body.quoteNumber ?? null,
+      quote_date: body.quoteDate ?? new Date().toISOString(),
+      items: body.items,
+      total: quoteTotal(body.items),
+      notes: body.notes ?? null,
+      status: body.status,
+      food_cost: Math.max(0, Math.round(Number(body.foodCost) || 0)),
+      updated_at: new Date().toISOString(),
+    };
+    if (body.dueDate !== undefined) patch.due_date = body.dueDate;
+    if (body.lastContactedAt !== undefined) patch.last_contacted_at = body.lastContactedAt;
     const { data, error } = await getSupabase()
       .from("quotes")
-      .update({
-        event_id: body.eventId,
-        quote_number: body.quoteNumber ?? null,
-        quote_date: body.quoteDate ?? new Date().toISOString(),
-        items: body.items,
-        total: quoteTotal(body.items),
-        notes: body.notes ?? null,
-        status: body.status,
-        food_cost: Math.max(0, Math.round(Number(body.foodCost) || 0)),
-        updated_at: new Date().toISOString(),
-      })
+      .update(patch)
       .eq("id", id)
       .select("*")
       .single();
@@ -1206,6 +1337,55 @@ export const cloud = {
     const { error } = await getSupabase().from("quotes").delete().eq("id", id);
     if (error) throw new Error(error.message);
     return { ok: true };
+  },
+
+  async duplicateQuote(id: number): Promise<QuoteDetail> {
+    const source = await cloud.getQuote(id);
+    const db = getSupabase();
+    const { data: siblings } = await db
+      .from("quotes")
+      .select("version")
+      .eq("event_id", source.eventId)
+      .order("version", { ascending: false })
+      .limit(1);
+    const nextVersion = ((siblings as Array<{ version: number | null }> | null)?.[0]?.version ?? source.version ?? 1) + 1;
+    const { data, error } = await db
+      .from("quotes")
+      .insert({
+        event_id: source.eventId,
+        quote_number: source.quoteNumber ? `${source.quoteNumber}-v${nextVersion}` : null,
+        quote_date: new Date().toISOString(),
+        items: source.items,
+        total: source.total,
+        notes: source.notes,
+        status: "borrador",
+        deposit_amount: 0,
+        food_cost: source.foodCost,
+        version: nextVersion,
+        parent_quote_id: source.id,
+        public_token: randomToken().slice(0, 32),
+        due_date: source.dueDate,
+      })
+      .select("*")
+      .single();
+    const row = assertOk(data as QuoteRow | null, error, "No se pudo duplicar la cotización");
+    return cloud.getQuote(row.id);
+  },
+
+  async getPublicQuote(token: string) {
+    return rpcJson<PublicQuoteView>("crm_quote_public", { p_token: token });
+  },
+
+  async respondPublicQuote(token: string, action: "accept" | "reject") {
+    return rpcJson<PublicQuoteView>("crm_quote_public_respond", { p_token: token, p_action: action });
+  },
+
+  async updateUserRole(id: number, role: string) {
+    const res = await rpcJson<{ user: AuthRpcUser }>("crm_auth_set_role", {
+      p_user_id: id,
+      p_role: role,
+    });
+    return toPublicUser(res.user);
   },
 
   async authStatus() {
