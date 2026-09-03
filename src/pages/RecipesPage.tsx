@@ -11,7 +11,7 @@ import {
   SERVICE_TYPE_LABELS,
   type ServiceType,
 } from "../../shared/types";
-import { DIETARY_TAGS, DIETARY_TAG_LABELS, type DietaryTag } from "../../shared/ops";
+import { ALLERGEN_CONTAINS_LABELS, DIETARY_TAGS, type DietaryTag } from "../../shared/ops";
 import { useAuth } from "../components/AuthGate";
 import { canDeleteCatalog } from "../../shared/roles";
 
@@ -230,7 +230,7 @@ export function RecipesPage() {
                     )
                   }
                 >
-                  {DIETARY_TAG_LABELS[tag]}
+                  {ALLERGEN_CONTAINS_LABELS[tag]}
                 </button>
               ))}
             </div>
@@ -419,7 +419,7 @@ export function RecipesPage() {
                       <div className="chip-row" style={{ marginTop: 6 }}>
                         {r.allergenTags.map((tag) => (
                           <span key={tag} className="badge tone-warn">
-                            {DIETARY_TAG_LABELS[tag]}
+                            {ALLERGEN_CONTAINS_LABELS[tag]}
                           </span>
                         ))}
                       </div>

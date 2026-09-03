@@ -180,6 +180,8 @@ function read(): Store {
       allergenTags: parseDietaryTags(r.allergenTags),
     }));
     parsed.teamUsers = parsed.teamUsers.map((u) => ({ ...u, role: normalizeRole(u.role) }));
+    const hadMissingToken = ((JSON.parse(raw) as Store).quotes ?? []).some((q) => !q.publicToken);
+    if (hadMissingToken) write(parsed);
     return parsed;
   } catch {
     return empty();
@@ -223,7 +225,7 @@ function normalizeStoredQuote(q: Store["quotes"][number]): Store["quotes"][numbe
     depositAmount: sumPayments(payments),
     version: q.version ?? 1,
     parentQuoteId: q.parentQuoteId ?? null,
-    publicToken: q.publicToken ?? null,
+    publicToken: q.publicToken || randomToken().slice(0, 32),
     dueDate: q.dueDate ?? null,
     lastContactedAt: q.lastContactedAt ?? null,
   };
@@ -1013,7 +1015,7 @@ export const local = {
   },
   getPublicQuote(token: string) {
     const store = read();
-    const q = store.quotes.find((x) => x.publicToken === token);
+    const q = store.quotes.find((x) => x.publicToken === token.trim());
     if (!q) fail("Cotización no encontrada");
     const detail = quoteDetail(store, q);
     return {
