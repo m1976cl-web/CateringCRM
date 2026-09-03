@@ -653,8 +653,13 @@ export function QuotesPage() {
                     <Link className="btn" to={`/cotizaciones/${q.id}/imprimir`}>
                       Imprimir / PDF
                     </Link>
+                    {q.publicToken ? (
+                      <Link className="btn" to={`/p/${q.publicToken}`}>
+                        Ver como cliente
+                      </Link>
+                    ) : null}
                     <button type="button" className="btn" onClick={() => void copyPublicLink(q)}>
-                      Link público
+                      Copiar link
                     </button>
                     <button type="button" className="btn" onClick={() => startEdit(q)}>
                       Editar

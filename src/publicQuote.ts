@@ -18,7 +18,6 @@ export type PublicQuoteView = {
 };
 
 export function publicQuoteUrl(token: string): string {
-  const url = new URL(window.location.href);
-  url.hash = `#/p/${encodeURIComponent(token)}`;
-  return url.toString();
+  const path = window.location.pathname.replace(/\/index\.html$/i, "/");
+  return `${window.location.origin}${path}${window.location.search}#/p/${encodeURIComponent(token)}`;
 }

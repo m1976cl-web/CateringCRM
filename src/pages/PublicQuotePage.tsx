@@ -6,7 +6,8 @@ import { quoteTaxBreakdown, loadCompanySettings } from "../settings";
 import { QUOTE_STATUS_LABELS } from "../../shared/types";
 
 export function PublicQuotePage() {
-  const { token = "" } = useParams();
+  const rawToken = String(useParams().token ?? "");
+  const token = decodeURIComponent(rawToken).trim();
   const [quote, setQuote] = useState<PublicQuoteView | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);

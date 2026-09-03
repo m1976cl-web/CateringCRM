@@ -22,6 +22,17 @@ export const DIETARY_TAG_LABELS: Record<DietaryTag, string> = {
   vegetariano: "Vegetariano",
 };
 
+export const ALLERGEN_CONTAINS_LABELS: Record<(typeof DIETARY_TAGS)[number], string> = {
+  gluten: "Gluten",
+  lactosa: "Lactosa",
+  mani: "Maní / frutos secos",
+  mariscos: "Mariscos",
+  huevo: "Huevo",
+  soja: "Soja",
+  vegano: "No apto vegano",
+  vegetariano: "No apto vegetariano",
+};
+
 export function isDietaryTag(value: unknown): value is DietaryTag {
   return typeof value === "string" && (DIETARY_TAGS as readonly string[]).includes(value);
 }

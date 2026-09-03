@@ -511,14 +511,34 @@ export const api = {
   ),
   deleteQuote: route(cloud.deleteQuote, remote.deleteQuote, (id) => local.deleteQuote(id)),
   duplicateQuote: route(cloud.duplicateQuote, remote.duplicateQuote, (id) => local.duplicateQuote(id)),
-  getPublicQuote: route(cloud.getPublicQuote, remote.getPublicQuote, (token) =>
-    local.getPublicQuote(token),
-  ),
-  respondPublicQuote: route(
-    cloud.respondPublicQuote,
-    remote.respondPublicQuote,
-    (token, action) => local.respondPublicQuote(token, action),
-  ),
+  getPublicQuote: async (token: string) => {
+    const t = decodeURIComponent(String(token ?? "")).trim();
+    try {
+      return local.getPublicQuote(t);
+    } catch (localErr) {
+      if (usingSupabase()) return cloud.getPublicQuote(t);
+      if (STATIC_ONLY) throw localErr;
+      try {
+        return await remote.getPublicQuote(t);
+      } catch {
+        throw localErr;
+      }
+    }
+  },
+  respondPublicQuote: async (token: string, action: "accept" | "reject") => {
+    const t = decodeURIComponent(String(token ?? "")).trim();
+    try {
+      return local.respondPublicQuote(t, action);
+    } catch (localErr) {
+      if (usingSupabase()) return cloud.respondPublicQuote(t, action);
+      if (STATIC_ONLY) throw localErr;
+      try {
+        return await remote.respondPublicQuote(t, action);
+      } catch {
+        throw localErr;
+      }
+    }
+  },
 
   authStatus: authRoute(cloud.authStatus, remote.authStatus, () => local.authStatus()),
   authSetup: authRoute(cloud.authSetup, remote.authSetup, (body) => local.authSetup(body)),
