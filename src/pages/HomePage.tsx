@@ -14,8 +14,11 @@ import {
 import { PageHeader } from "../components/EmptyState";
 import { QuoteBadge, StatusBadge } from "../components/StatusBadge";
 import { clientMoneyFromQuotes, collectionsThisWeek, quoteMoney } from "../quoteDisplay";
+import { useAuth } from "../components/AuthGate";
+import { canEditQuotes } from "../../shared/roles";
 
 export function HomePage() {
+  const { user } = useAuth();
   const [data, setData] = useState<Dashboard | null>(null);
   const [events, setEvents] = useState<EventSummary[]>([]);
   const [quotes, setQuotes] = useState<QuoteSummary[]>([]);
@@ -111,9 +114,16 @@ export function HomePage() {
         <Link className="btn" to="/compras">
           Lista de compras
         </Link>
-        <Link className="btn" to="/cotizaciones">
-          Cotizaciones
-        </Link>
+        {canEditQuotes(user.role) ? (
+          <>
+            <Link className="btn" to="/cotizaciones">
+              Cotizaciones
+            </Link>
+            <Link className="btn" to="/cobranza">
+              Cobranza
+            </Link>
+          </>
+        ) : null}
       </div>
 
       <div className="stat-grid">

@@ -1,4 +1,4 @@
-import { NavLink, Route, Routes } from "react-router-dom";
+import { NavLink, Outlet, Route, Routes } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { AuthGate } from "./components/AuthGate";
 import { HomePage } from "./pages/HomePage";
@@ -14,38 +14,51 @@ import { QuotesPage } from "./pages/QuotesPage";
 import { QuotePrintPage } from "./pages/QuotePrintPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { ProductionPage } from "./pages/ProductionPage";
+import { CollectionsPage } from "./pages/CollectionsPage";
+import { PublicQuotePage } from "./pages/PublicQuotePage";
 
 export default function App() {
   return (
-    <AuthGate>
-      <Routes>
+    <Routes>
+      <Route path="/p/:token" element={<PublicQuotePage />} />
+      <Route element={<AuthenticatedApp />}>
         <Route path="/cotizaciones/:id/imprimir" element={<QuotePrintPage />} />
         <Route path="/eventos/:id/produccion" element={<ProductionPage />} />
-        <Route
-          path="/*"
-          element={
-            <Layout>
-              <Routes>
-                <Route path="/" element={<HomePage />} />
-                <Route path="/clientes" element={<ClientsPage />} />
-                <Route path="/eventos" element={<EventsPage />} />
-                <Route path="/eventos/nuevo" element={<EventDetailPage />} />
-                <Route path="/eventos/:id" element={<EventDetailPage />} />
-                <Route path="/calendario" element={<CalendarPage />} />
-                <Route path="/recetas" element={<RecipesPage />} />
-                <Route path="/ingredientes" element={<IngredientsPage />} />
-                <Route path="/proveedores" element={<SuppliersPage />} />
-                <Route path="/compras" element={<ShoppingPage />} />
-                <Route path="/compras/:eventId" element={<ShoppingPage />} />
-                <Route path="/cotizaciones" element={<QuotesPage />} />
-                <Route path="/ajustes" element={<SettingsPage />} />
-                <Route path="*" element={<NotFound />} />
-              </Routes>
-            </Layout>
-          }
-        />
-      </Routes>
+        <Route element={<LayoutShell />}>
+          <Route path="/" element={<HomePage />} />
+          <Route path="/clientes" element={<ClientsPage />} />
+          <Route path="/eventos" element={<EventsPage />} />
+          <Route path="/eventos/nuevo" element={<EventDetailPage />} />
+          <Route path="/eventos/:id" element={<EventDetailPage />} />
+          <Route path="/calendario" element={<CalendarPage />} />
+          <Route path="/recetas" element={<RecipesPage />} />
+          <Route path="/ingredientes" element={<IngredientsPage />} />
+          <Route path="/proveedores" element={<SuppliersPage />} />
+          <Route path="/compras" element={<ShoppingPage />} />
+          <Route path="/compras/:eventId" element={<ShoppingPage />} />
+          <Route path="/cotizaciones" element={<QuotesPage />} />
+          <Route path="/cobranza" element={<CollectionsPage />} />
+          <Route path="/ajustes" element={<SettingsPage />} />
+          <Route path="*" element={<NotFound />} />
+        </Route>
+      </Route>
+    </Routes>
+  );
+}
+
+function AuthenticatedApp() {
+  return (
+    <AuthGate>
+      <Outlet />
     </AuthGate>
+  );
+}
+
+function LayoutShell() {
+  return (
+    <Layout>
+      <Outlet />
+    </Layout>
   );
 }
 

@@ -1,15 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, formatMoney, type Ingredient, type Supplier } from "../api";
+import { api, formatDateOnly, formatMoney, type Ingredient, type Supplier } from "../api";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { EmptyState, PageHeader } from "../components/EmptyState";
 import { FormField } from "../components/FormField";
 import { SearchBar } from "../components/SearchBar";
 import { matchesQuery } from "../search";
 import { INGREDIENT_UNITS, type IngredientUnit } from "../../shared/types";
+import { useAuth } from "../components/AuthGate";
+import { canDeleteCatalog, canEditPrices } from "../../shared/roles";
 
 const blank = { name: "", unit: "g" as IngredientUnit, supplierId: "", unitPrice: "", stockQty: "0" };
 
 export function IngredientsPage() {
+  const { user } = useAuth();
   const [rows, setRows] = useState<Ingredient[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [form, setForm] = useState(blank);
@@ -133,6 +136,7 @@ export function IngredientsPage() {
                 step="1"
                 value={form.unitPrice}
                 onChange={(e) => setForm({ ...form, unitPrice: e.target.value })}
+                disabled={!canEditPrices(user.role)}
               />
             </FormField>
           </div>
@@ -161,6 +165,16 @@ export function IngredientsPage() {
               ))}
             </select>
           </FormField>
+          {editingId ? (
+            <p className="meta">
+              {(rows.find((r) => r.id === editingId)?.priceHistory ?? []).length
+                ? `Historial: ${(rows.find((r) => r.id === editingId)?.priceHistory ?? [])
+                    .slice(-5)
+                    .map((h) => `${formatMoney(h.unitPrice)} (${formatDateOnly(h.recordedAt)})`)
+                    .join(" · ")}`
+                : "Aún no hay historial de precios. Se guarda cada vez que cambias el precio."}
+            </p>
+          ) : null}
           <div className="form-actions">
             <button className="btn primary" type="submit" disabled={saving}>
               {saving ? "Guardando…" : "Guardar"}
@@ -212,6 +226,7 @@ export function IngredientsPage() {
                           <button type="button" className="btn" onClick={() => startEdit(row)}>
                             Editar
                           </button>
+                          {canDeleteCatalog(user.role) ? (
                           <button
                             type="button"
                             className="btn danger"
@@ -219,6 +234,7 @@ export function IngredientsPage() {
                           >
                             Eliminar
                           </button>
+                          ) : null}
                         </div>
                       </td>
                     </tr>

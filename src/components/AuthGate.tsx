@@ -1,7 +1,13 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { api, type AuthUser } from "../api";
 import { setSessionToken } from "../session";
+import { seedDemoIfEmpty } from "../demoSeed";
 import { FormField } from "./FormField";
+import { normalizeRole } from "../../shared/roles";
+
+function withRole(user: AuthUser): AuthUser {
+  return { ...user, role: normalizeRole(user.role) };
+}
 
 type AuthContextValue = {
   user: AuthUser;
@@ -37,7 +43,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     setConfigured(status.configured);
     setHasRecovery(status.hasRecovery);
     setDemoAvailable(status.demoAvailable);
-    setUser(status.user);
+    setUser(status.user ? withRole(status.user) : null);
   }
 
   useEffect(() => {
@@ -70,7 +76,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     try {
       const res = await api.authSetup({ name, email, password });
       setSessionToken(res.token);
-      setUser(res.user);
+      setUser(withRole(res.user));
       setConfigured(true);
       setHasRecovery(true);
       setRecoveryCode(res.recoveryCode);
@@ -89,7 +95,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     try {
       const res = await api.authLogin({ email, password });
       setSessionToken(res.token);
-      setUser(res.user);
+      setUser(withRole(res.user));
       setPassword("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo entrar");
@@ -105,7 +111,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     try {
       const res = await api.authRecover({ email, code, password });
       setSessionToken(res.token);
-      setUser(res.user);
+      setUser(withRole(res.user));
       setPassword("");
       setCode("");
       setRecover(false);
@@ -122,7 +128,12 @@ export function AuthGate({ children }: { children: ReactNode }) {
     try {
       const res = await api.authDemoLogin();
       setSessionToken(res.token);
-      setUser(res.user);
+      try {
+        await seedDemoIfEmpty();
+      } catch {
+        /* el login sigue aunque falle el ejemplo */
+      }
+      setUser(withRole(res.user));
       setConfigured(true);
       setPassword("");
       setRecover(false);

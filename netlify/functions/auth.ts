@@ -7,11 +7,13 @@ import {
   countTeamUsers,
   createSession,
   createTeamUser,
+  denyIfCannot,
   denyIfUnauthorized,
   destroySession,
   destroyUserSessions,
   findUserByEmail,
   getSessionUser,
+  hasNonDemoUsers,
   hasRecoveryCode,
   hasTeamUsers,
   isDemoLoginEnabled,
@@ -20,9 +22,11 @@ import {
   publicUser,
   replaceRecoveryCode,
   setUserPassword,
+  setUserRole,
   validateNewPassword,
   verifyRecoveryCode,
 } from "./_shared/auth";
+import { canManageUsers, isTeamRole } from "../../shared/roles";
 import { error, json, readJson } from "./_shared/http";
 
 export default async (req: Request, _context: Context) => {
@@ -32,7 +36,12 @@ export default async (req: Request, _context: Context) => {
   if (req.method === "GET" && action === "status") {
     const configured = await hasTeamUsers();
     const user = configured ? await getSessionUser(req) : null;
-    return json({ configured, user, hasRecovery: await hasRecoveryCode(), demoAvailable: isDemoLoginEnabled() });
+    return json({
+      configured,
+      user,
+      hasRecovery: await hasRecoveryCode(),
+      demoAvailable: isDemoLoginEnabled() && !(await hasNonDemoUsers()),
+    });
   }
 
   if (req.method === "GET" && action === "me") {
@@ -81,7 +90,7 @@ export default async (req: Request, _context: Context) => {
   }
 
   if (req.method === "POST" && action === "users") {
-    const denied = await denyIfUnauthorized(req);
+    const denied = await denyIfCannot(req, canManageUsers);
     if (denied) return denied;
     const body = await readJson(req);
     const name = String(body.name ?? "").trim();
@@ -100,7 +109,7 @@ export default async (req: Request, _context: Context) => {
     const denied = await denyIfUnauthorized(req);
     if (denied) return denied;
     const rows = await db
-      .select({ id: teamUsers.id, email: teamUsers.email, name: teamUsers.name })
+      .select({ id: teamUsers.id, email: teamUsers.email, name: teamUsers.name, role: teamUsers.role })
       .from(teamUsers);
     return json(rows.map(publicUser));
   }
@@ -164,7 +173,7 @@ export default async (req: Request, _context: Context) => {
   }
 
   if (req.method === "DELETE" && action === "users") {
-    const denied = await denyIfUnauthorized(req);
+    const denied = await denyIfCannot(req, canManageUsers);
     if (denied) return denied;
     const actor = await getSessionUser(req);
     if (!actor) return error("Inicia sesión para continuar", 401);
@@ -176,6 +185,21 @@ export default async (req: Request, _context: Context) => {
     if (!target) return error("Usuario no encontrado", 404);
     await db.delete(teamUsers).where(eq(teamUsers.id, userId));
     return json({ ok: true });
+  }
+
+  if ((req.method === "PUT" || req.method === "PATCH") && action === "role") {
+    const denied = await denyIfCannot(req, canManageUsers);
+    if (denied) return denied;
+    const actor = await getSessionUser(req);
+    if (!actor) return error("Inicia sesión para continuar", 401);
+    const body = await readJson(req);
+    const userId = Number(body.userId);
+    if (!Number.isInteger(userId) || userId <= 0) return error("Usuario no válido");
+    if (userId === actor.id) return error("No puedes cambiar tu propio rol");
+    if (!isTeamRole(body.role)) return error("Rol no válido");
+    const user = await setUserRole(userId, body.role);
+    if (!user) return error("Usuario no encontrado", 404);
+    return json({ user });
   }
 
   return error("Acción no válida", 404);

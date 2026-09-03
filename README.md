@@ -7,13 +7,14 @@ Pensado para equipos con poco conocimiento técnico: formularios claros, textos 
 ## Qué incluye
 
 - **Clientes** — ficha con contacto y notas
-- **Eventos** — fecha, asistentes, servicios (desayuno / almuerzo / cena / coffee break / otro), estado, restricciones alimentarias, costo estimado y menú de recetas
+- **Eventos** — fecha, horario de montaje/servicio, recinto, asistentes, dietas, packing, gastos, personal y menú
 - **Calendario** — vista mensual
-- **Recetas** — rendimiento configurable + ingredientes
-- **Ingredientes y proveedores** — catálogo con precios
+- **Recetas** — rendimiento, foto (URL), alérgenos e ingredientes
+- **Ingredientes y proveedores** — catálogo con precios e historial
 - **Lista de compras** — se genera escalando las recetas del evento por porciones
-- **Cotizaciones** — ítems editables, varios abonos, margen vs. costo de ingredientes, vista imprimible / PDF
-- **Clientes** — ficha con contacto, historial de eventos/cotizaciones y saldo
+- **Cotizaciones** — ítems, abonos, versiones, enlace público para el cliente, margen
+- **Cobranza** — cola de saldos, WhatsApp y seguimiento
+- **Roles** — administración, ventas y cocina
 
 ## Stack
 
@@ -25,7 +26,7 @@ Pensado para equipos con poco conocimiento técnico: formularios claros, textos 
 
 **Login de equipo.** La primera visita pide crear un email y contraseña. En la misma pantalla hay **Probar sin contraseña**: entra con un usuario de demostración (`demo@cateringcrm.app`) para recorrer la app online sin clave. Después, las Functions de Netlify exigen sesión. En Supabase, RLS y funciones de auth exigen la misma sesión (la anon key no alcanza para leer tablas). En modo local el login cierra la interfaz.
 
-El acceso de prueba está **activo por defecto**. Quien lo use ve y puede editar los mismos datos del CRM. Para apagarlo: `DEMO_LOGIN=false` en Netlify, o `VITE_DEMO_LOGIN=false` en el build de Pages. En Supabase, ejecuta `007_demo_login.sql` (o quita el `GRANT` de `crm_auth_demo` si ya no lo quieres).
+El acceso de prueba está **activo por defecto** y se oculta solo cuando ya existe un usuario real (email distinto de `demo@cateringcrm.app`). Quien lo use ve y puede editar los mismos datos del CRM. Para apagarlo del todo: `DEMO_LOGIN=false` en Netlify, o `VITE_DEMO_LOGIN=false` en el build de Pages. En Supabase, ejecuta `007_demo_login.sql` y `008_ops_features.sql`.
 
 **Sin autenticación de clientes finales.** El login es para el equipo de catering, no para invitados.
 
@@ -33,7 +34,7 @@ El acceso de prueba está **activo por defecto**. Quien lo use ve y puede editar
 
 Prioridad automática:
 
-1. **Nube (Supabase)** — si existen `VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY`
+1. **Nube (Supabase)** — si hay URL y anon key (variables de entorno **o** pegadas en Ajustes)
 2. **API (Netlify)** — si no es build estático (`VITE_STATIC_ONLY` no está en `true`)
 3. **Estático (este dispositivo)** — `localStorage` (fallback / Pages sin Supabase)
 
@@ -89,12 +90,10 @@ Si también usas Supabase, actualiza `supabase/migrations/` para mantener el esq
 Sin Supabase, GitHub Pages guarda todo en el `localStorage` de cada teléfono/PC (no se comparte). Para un CRM de equipo, conecta un proyecto gratis de Supabase:
 
 1. Crea un proyecto en [supabase.com](https://supabase.com) (plan free).
-2. Abre **SQL Editor** → New query → ejecuta en orden los archivos de [`supabase/migrations/`](./supabase/migrations/) (`001` … `007`).
+2. Abre **SQL Editor** → New query → ejecuta en orden los archivos de [`supabase/migrations/`](./supabase/migrations/) (`001` … `008`).
 3. En **Project Settings → API**, copia **Project URL** y **anon public** key.
-4. En GitHub: **Settings → Secrets and variables → Actions**, crea:
-   - `VITE_SUPABASE_URL`
-   - `VITE_SUPABASE_ANON_KEY`
-5. Vuelve a desplegar Pages (push a `main` o *Run workflow*). El badge debe decir **Nube (Supabase)**.
+4. En la app, **Ajustes → Conectar nube**, pega URL y clave y recarga. (Opcional: secrets de GitHub `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` para que el build ya venga conectado.)
+5. El badge debe decir **Nube (se comparte)**.
 
 **Seguridad:** el login de equipo cierra la app. En Supabase, RLS exige un token de sesión (`x-team-token`); hashes de contraseña no salen por la API. No subas la **service role** key. En Netlify, las Functions también exigen sesión después del primer usuario.
 

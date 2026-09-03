@@ -1,5 +1,18 @@
 import { applyPurchaseToStock, buildShoppingLines, quantityAfterStock } from "../shared/shopping";
 import { hashPassword, normalizeRecoveryCode, randomRecoveryCode, randomToken, sha256Hex, verifyPassword } from "../shared/password";
+import {
+  defaultPackingItems,
+  parseDietaryTags,
+  parseExpenses,
+  parsePackingItems,
+  parseStaff,
+  parseTimeHm,
+  type DietaryTag,
+  type EventExpense,
+  type EventStaff,
+  type PackingItem,
+} from "../shared/ops";
+import { normalizeRole, type TeamRole } from "../shared/roles";
 import { DEMO_USER_EMAIL, DEMO_USER_NAME, parseDemoLoginFlag } from "../shared/demoLogin";
 import {
   quoteTotal,
@@ -50,6 +63,15 @@ type Store = {
     attendees: number;
     status: EventDetail["status"];
     dietaryRestrictions: string | null;
+    dietaryTags: DietaryTag[];
+    setupTime: string | null;
+    serviceTime: string | null;
+    endTime: string | null;
+    venueContact: string | null;
+    venuePhone: string | null;
+    packingItems: PackingItem[];
+    expenses: EventExpense[];
+    staff: EventStaff[];
     notes: string | null;
     estimatedCost: number | null;
     services: ServiceType[];
@@ -74,6 +96,11 @@ type Store = {
     depositAmount: number;
     foodCost: number;
     payments: QuotePayment[];
+    version: number;
+    parentQuoteId: number | null;
+    publicToken: string | null;
+    dueDate: string | null;
+    lastContactedAt: string | null;
     createdAt: string;
     updatedAt: string;
   }>;
@@ -90,6 +117,7 @@ type Store = {
     name: string;
     passwordSalt: string;
     passwordHash: string;
+    role: TeamRole;
     createdAt: string;
     updatedAt: string;
   }>;
@@ -101,6 +129,7 @@ type Store = {
     createdAt: string;
   }>;
   teamRecovery: { salt: string; hash: string; createdAt: string } | null;
+  ingredientPrices: Array<{ id: number; ingredientId: number; unitPrice: number; recordedAt: string }>;
   seq: Record<string, number>;
 };
 
@@ -116,6 +145,7 @@ function empty(): Store {
     teamUsers: [],
     teamSessions: [],
     teamRecovery: null,
+    ingredientPrices: [],
     seq: {},
   };
 }
@@ -129,6 +159,29 @@ function read(): Store {
     parsed.teamSessions = parsed.teamSessions ?? [];
     parsed.teamRecovery = parsed.teamRecovery ?? null;
     parsed.quotes = parsed.quotes.map(normalizeStoredQuote);
+    parsed.ingredientPrices = parsed.ingredientPrices ?? [];
+    parsed.events = parsed.events.map((ev) => ({
+      ...ev,
+      dietaryTags: parseDietaryTags(ev.dietaryTags),
+      setupTime: ev.setupTime ?? null,
+      serviceTime: ev.serviceTime ?? null,
+      endTime: ev.endTime ?? null,
+      venueContact: ev.venueContact ?? null,
+      venuePhone: ev.venuePhone ?? null,
+      packingItems: parsePackingItems(ev.packingItems).length
+        ? parsePackingItems(ev.packingItems)
+        : defaultPackingItems(),
+      expenses: parseExpenses(ev.expenses),
+      staff: parseStaff(ev.staff),
+    }));
+    parsed.recipes = parsed.recipes.map((r) => ({
+      ...r,
+      imageUrl: r.imageUrl ?? null,
+      allergenTags: parseDietaryTags(r.allergenTags),
+    }));
+    parsed.teamUsers = parsed.teamUsers.map((u) => ({ ...u, role: normalizeRole(u.role) }));
+    const hadMissingToken = ((JSON.parse(raw) as Store).quotes ?? []).some((q) => !q.publicToken);
+    if (hadMissingToken) write(parsed);
     return parsed;
   } catch {
     return empty();
@@ -170,6 +223,11 @@ function normalizeStoredQuote(q: Store["quotes"][number]): Store["quotes"][numbe
     foodCost: q.foodCost ?? 0,
     payments,
     depositAmount: sumPayments(payments),
+    version: q.version ?? 1,
+    parentQuoteId: q.parentQuoteId ?? null,
+    publicToken: q.publicToken || randomToken().slice(0, 32),
+    dueDate: q.dueDate ?? null,
+    lastContactedAt: q.lastContactedAt ?? null,
   };
 }
 
@@ -200,6 +258,8 @@ function eventSummary(store: Store, ev: Store["events"][number]): EventSummary {
     estimatedCost: ev.estimatedCost,
     clientName: client?.name ?? "—",
     services: ev.services,
+    setupTime: ev.setupTime ?? null,
+    serviceTime: ev.serviceTime ?? null,
   };
 }
 
@@ -207,6 +267,17 @@ function eventDetail(store: Store, ev: Store["events"][number]): EventDetail {
   return {
     ...eventSummary(store, ev),
     dietaryRestrictions: ev.dietaryRestrictions,
+    dietaryTags: parseDietaryTags(ev.dietaryTags),
+    setupTime: ev.setupTime ?? null,
+    serviceTime: ev.serviceTime ?? null,
+    endTime: ev.endTime ?? null,
+    venueContact: ev.venueContact ?? null,
+    venuePhone: ev.venuePhone ?? null,
+    packingItems: parsePackingItems(ev.packingItems).length
+      ? parsePackingItems(ev.packingItems)
+      : defaultPackingItems(),
+    expenses: parseExpenses(ev.expenses),
+    staff: parseStaff(ev.staff),
     notes: ev.notes,
     recipes: ev.recipes.map((r) => ({
       ...r,
@@ -236,6 +307,11 @@ function quoteSummary(store: Store, q: Store["quotes"][number]): QuoteSummary {
     clientName: client?.name ?? "—",
     clientPhone: client?.phone ?? null,
     createdAt: q.createdAt,
+    version: q.version ?? 1,
+    parentQuoteId: q.parentQuoteId ?? null,
+    publicToken: q.publicToken ?? null,
+    dueDate: q.dueDate ?? null,
+    lastContactedAt: q.lastContactedAt ?? null,
   };
 }
 
@@ -264,7 +340,22 @@ function syncEventStatusFromQuote(store: Store, eventId: number, quoteStatus: Qu
 }
 
 function toPublicUser(row: Store["teamUsers"][number]): AuthUser {
-  return { id: row.id, email: row.email, name: row.name };
+  return { id: row.id, email: row.email, name: row.name, role: normalizeRole(row.role) };
+}
+
+function eventOpsFromBody(body: EventInput) {
+  const packing = parsePackingItems(body.packingItems);
+  return {
+    dietaryTags: parseDietaryTags(body.dietaryTags),
+    setupTime: parseTimeHm(body.setupTime),
+    serviceTime: parseTimeHm(body.serviceTime),
+    endTime: parseTimeHm(body.endTime),
+    venueContact: body.venueContact?.trim() || null,
+    venuePhone: body.venuePhone?.trim() || null,
+    packingItems: packing.length ? packing : defaultPackingItems(),
+    expenses: parseExpenses(body.expenses),
+    staff: parseStaff(body.staff),
+  };
 }
 
 function normalizeEmail(value: string): string {
@@ -480,7 +571,12 @@ export const local = {
   listIngredients() {
     const store = read();
     return store.ingredients
-      .map((i) => withSupplierName(store, i))
+      .map((i) => ({
+        ...withSupplierName(store, i),
+        priceHistory: store.ingredientPrices
+          .filter((p) => p.ingredientId === i.id)
+          .map((p) => ({ id: p.id, unitPrice: p.unitPrice, recordedAt: p.recordedAt })),
+      }))
       .sort((a, b) => a.name.localeCompare(b.name, "es"));
   },
   createIngredient(body: IngredientInput) {
@@ -496,6 +592,14 @@ export const local = {
       updatedAt: nowIso(),
     };
     store.ingredients.push(row);
+    if (row.unitPrice != null) {
+      store.ingredientPrices.push({
+        id: nextId(store, "ingredientPrices"),
+        ingredientId: row.id,
+        unitPrice: row.unitPrice,
+        recordedAt: nowIso(),
+      });
+    }
     write(store);
     return withSupplierName(store, row);
   },
@@ -503,17 +607,31 @@ export const local = {
     const store = read();
     const idx = store.ingredients.findIndex((i) => i.id === id);
     if (idx < 0) fail("Ingrediente no encontrado");
+    const prev = store.ingredients[idx];
     store.ingredients[idx] = {
-      ...store.ingredients[idx],
+      ...prev,
       name: body.name,
       unit: body.unit,
       supplierId: body.supplierId ?? null,
       unitPrice: body.unitPrice ?? null,
-      stockQty: body.stockQty ?? store.ingredients[idx].stockQty ?? 0,
+      stockQty: body.stockQty ?? prev.stockQty ?? 0,
       updatedAt: nowIso(),
     };
+    if (body.unitPrice != null && body.unitPrice !== prev.unitPrice) {
+      store.ingredientPrices.push({
+        id: nextId(store, "ingredientPrices"),
+        ingredientId: id,
+        unitPrice: body.unitPrice,
+        recordedAt: nowIso(),
+      });
+    }
     write(store);
-    return withSupplierName(store, store.ingredients[idx]);
+    return {
+      ...withSupplierName(store, store.ingredients[idx]),
+      priceHistory: store.ingredientPrices
+        .filter((p) => p.ingredientId === id)
+        .map((p) => ({ id: p.id, unitPrice: p.unitPrice, recordedAt: p.recordedAt })),
+    };
   },
   deleteIngredient(id: number) {
     const store = read();
@@ -555,6 +673,8 @@ export const local = {
       ingredients,
       instructions: body.instructions ?? null,
       estimatedCost: body.estimatedCost ?? null,
+      imageUrl: body.imageUrl ?? null,
+      allergenTags: parseDietaryTags(body.allergenTags),
       createdAt: nowIso(),
       updatedAt: nowIso(),
     };
@@ -584,6 +704,8 @@ export const local = {
       suitableServices: body.suitableServices ?? [],
       instructions: body.instructions ?? null,
       estimatedCost: body.estimatedCost ?? null,
+      imageUrl: body.imageUrl ?? null,
+      allergenTags: parseDietaryTags(body.allergenTags),
       ingredients,
       updatedAt: nowIso(),
     };
@@ -626,6 +748,7 @@ export const local = {
       attendees: body.attendees,
       status: body.status,
       dietaryRestrictions: body.dietaryRestrictions ?? null,
+      ...eventOpsFromBody(body),
       notes: body.notes ?? null,
       estimatedCost: body.estimatedCost ?? null,
       services: body.services,
@@ -655,6 +778,7 @@ export const local = {
       attendees: body.attendees,
       status: body.status,
       dietaryRestrictions: body.dietaryRestrictions ?? null,
+      ...eventOpsFromBody(body),
       notes: body.notes ?? null,
       estimatedCost: body.estimatedCost ?? null,
       services: body.services,
@@ -817,6 +941,11 @@ export const local = {
       foodCost: Math.max(0, Math.round(Number(body.foodCost) || 0)),
       payments: [] as QuotePayment[],
       depositAmount: 0,
+      version: 1,
+      parentQuoteId: null,
+      publicToken: randomToken().slice(0, 32),
+      dueDate: body.dueDate ?? store.events.find((e) => e.id === body.eventId)?.eventDate ?? null,
+      lastContactedAt: null,
       createdAt: nowIso(),
       updatedAt: nowIso(),
     };
@@ -843,6 +972,9 @@ export const local = {
       foodCost: Math.max(0, Math.round(Number(body.foodCost) || 0)),
       payments: paymentsForBody(store, body),
       depositAmount: 0,
+      dueDate: body.dueDate !== undefined ? body.dueDate : store.quotes[idx].dueDate,
+      lastContactedAt:
+        body.lastContactedAt !== undefined ? body.lastContactedAt : store.quotes[idx].lastContactedAt,
       updatedAt: nowIso(),
     };
     store.quotes[idx].depositAmount = sumPayments(store.quotes[idx].payments);
@@ -856,12 +988,77 @@ export const local = {
     write(store);
     return { ok: true };
   },
+  duplicateQuote(id: number) {
+    const store = read();
+    const source = store.quotes.find((q) => q.id === id);
+    if (!source) fail("Cotización no encontrada");
+    const nextVersion =
+      Math.max(0, ...store.quotes.filter((q) => q.eventId === source.eventId).map((q) => q.version ?? 1)) + 1;
+    const row = {
+      ...source,
+      id: nextId(store, "quotes"),
+      quoteNumber: source.quoteNumber ? `${source.quoteNumber}-v${nextVersion}` : null,
+      quoteDate: nowIso(),
+      status: "borrador" as const,
+      payments: [] as QuotePayment[],
+      depositAmount: 0,
+      version: nextVersion,
+      parentQuoteId: source.id,
+      publicToken: randomToken().slice(0, 32),
+      lastContactedAt: null,
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+    };
+    store.quotes.push(row);
+    write(store);
+    return quoteDetail(store, row);
+  },
+  getPublicQuote(token: string) {
+    const store = read();
+    const q = store.quotes.find((x) => x.publicToken === token.trim());
+    if (!q) fail("Cotización no encontrada");
+    const detail = quoteDetail(store, q);
+    return {
+      id: detail.id,
+      quoteNumber: detail.quoteNumber,
+      quoteDate: detail.quoteDate,
+      items: detail.items,
+      total: detail.total,
+      notes: detail.notes,
+      status: detail.status,
+      version: detail.version,
+      eventTitle: detail.eventTitle,
+      eventDate: detail.eventDate,
+      location: detail.location,
+      attendees: detail.attendees,
+      clientName: detail.clientName,
+      clientCompany: detail.clientCompany,
+    };
+  },
+  respondPublicQuote(token: string, action: "accept" | "reject") {
+    const store = read();
+    const idx = store.quotes.findIndex((x) => x.publicToken === token);
+    if (idx < 0) fail("Cotización no encontrada");
+    const status = action === "accept" ? "aceptada" : "rechazada";
+    store.quotes[idx] = { ...store.quotes[idx], status, updatedAt: nowIso() };
+    if (status === "aceptada") syncEventStatusFromQuote(store, store.quotes[idx].eventId, status);
+    write(store);
+    return local.getPublicQuote(token);
+  },
+  updateUserRole(id: number, role: TeamRole) {
+    const store = read();
+    const idx = store.teamUsers.findIndex((u) => u.id === id);
+    if (idx < 0) fail("Usuario no encontrado");
+    store.teamUsers[idx] = { ...store.teamUsers[idx], role: normalizeRole(role), updatedAt: nowIso() };
+    write(store);
+    return toPublicUser(store.teamUsers[idx]);
+  },
 
   async authStatus() {
     const store = read();
     const configured = store.teamUsers.length > 0;
     const user = configured ? await localSessionUser(store) : null;
-    return { configured, user, hasRecovery: Boolean(store.teamRecovery), demoAvailable: localDemoEnabled() };
+    return { configured, user, hasRecovery: Boolean(store.teamRecovery), demoAvailable: localDemoEnabled() && !store.teamUsers.some((u) => u.email !== DEMO_USER_EMAIL) };
   },
 
   async authSetup(body: { name: string; email: string; password: string }) {
@@ -879,6 +1076,7 @@ export const local = {
       name,
       passwordSalt: hashed.salt,
       passwordHash: hashed.hash,
+      role: "admin" as const,
       createdAt: nowIso(),
       updatedAt: nowIso(),
     };
@@ -913,6 +1111,7 @@ export const local = {
         name: DEMO_USER_NAME,
         passwordSalt: hashed.salt,
         passwordHash: hashed.hash,
+        role: "admin" as const,
         createdAt: nowIso(),
         updatedAt: nowIso(),
       };
@@ -956,6 +1155,7 @@ export const local = {
       name,
       passwordSalt: hashed.salt,
       passwordHash: hashed.hash,
+      role: "admin" as const,
       createdAt: nowIso(),
       updatedAt: nowIso(),
     };
