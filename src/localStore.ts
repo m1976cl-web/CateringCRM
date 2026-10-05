@@ -1,4 +1,13 @@
-import { applyPurchaseToStock, buildShoppingLines, quantityAfterStock } from "../shared/shopping";
+import { applyPurchaseToStock, buildShoppingLines, convertQuantity, quantityAfterStock, roundQty } from "../shared/shopping";
+import {
+  clampStock,
+  isOpenPurchaseStatus,
+  isStockMovementKind,
+  movementDelta,
+  pendingOrderGroups,
+  type PurchaseOrderStatus,
+  type StockMovementKind,
+} from "../shared/procurement";
 import { hashPassword, normalizeRecoveryCode, randomRecoveryCode, randomToken, sha256Hex, verifyPassword } from "../shared/password";
 import {
   defaultPackingItems,
@@ -39,7 +48,9 @@ import type {
   EventDetail,
   EventSummary,
   Ingredient,
+  PurchaseOrder,
   QuoteDetail,
+  StockMovement,
   QuotePayment,
   QuoteSummary,
   Recipe,
@@ -130,6 +141,37 @@ type Store = {
   }>;
   teamRecovery: { salt: string; hash: string; createdAt: string } | null;
   ingredientPrices: Array<{ id: number; ingredientId: number; unitPrice: number; recordedAt: string }>;
+  stockMovements: Array<{
+    id: number;
+    ingredientId: number;
+    qty: number;
+    kind: StockMovementKind;
+    note: string | null;
+    eventId: number | null;
+    purchaseOrderId: number | null;
+    createdAt: string;
+  }>;
+  purchaseOrders: Array<{
+    id: number;
+    supplierId: number | null;
+    eventId: number | null;
+    status: PurchaseOrderStatus;
+    invoiceNumber: string | null;
+    invoiceTotal: number | null;
+    notes: string | null;
+    orderedAt: string;
+    receivedAt: string | null;
+    createdAt: string;
+    updatedAt: string;
+    items: Array<{
+      id: number;
+      ingredientId: number;
+      quantity: number;
+      unit: IngredientUnit;
+      unitPrice: number;
+      receivedQty: number;
+    }>;
+  }>;
   seq: Record<string, number>;
 };
 
@@ -146,6 +188,8 @@ function empty(): Store {
     teamSessions: [],
     teamRecovery: null,
     ingredientPrices: [],
+    stockMovements: [],
+    purchaseOrders: [],
     seq: {},
   };
 }
@@ -160,6 +204,8 @@ function read(): Store {
     parsed.teamRecovery = parsed.teamRecovery ?? null;
     parsed.quotes = parsed.quotes.map(normalizeStoredQuote);
     parsed.ingredientPrices = parsed.ingredientPrices ?? [];
+    parsed.stockMovements = parsed.stockMovements ?? [];
+    parsed.purchaseOrders = parsed.purchaseOrders ?? [];
     parsed.events = parsed.events.map((ev) => ({
       ...ev,
       dietaryTags: parseDietaryTags(ev.dietaryTags),
@@ -411,6 +457,97 @@ function fail(message: string): never {
   throw new Error(message);
 }
 
+function applyLocalDelta(
+  store: Store,
+  ingredientId: number,
+  delta: number,
+  kind: StockMovementKind,
+  meta: { note?: string | null; eventId?: number | null; purchaseOrderId?: number | null },
+): number {
+  const idx = store.ingredients.findIndex((ing) => ing.id === ingredientId);
+  if (idx < 0) fail("Ingrediente no encontrado");
+  const ing = store.ingredients[idx];
+  const { next, applied } = clampStock(ing.stockQty ?? 0, delta);
+  if (applied === 0) return 0;
+  store.ingredients[idx] = { ...ing, stockQty: next, updatedAt: nowIso() };
+  store.stockMovements.push({
+    id: nextId(store, "stockMovements"),
+    ingredientId,
+    qty: applied,
+    kind,
+    note: meta.note ?? null,
+    eventId: meta.eventId ?? null,
+    purchaseOrderId: meta.purchaseOrderId ?? null,
+    createdAt: nowIso(),
+  });
+  return applied;
+}
+
+function logLocalMovement(
+  store: Store,
+  ingredientId: number,
+  qty: number,
+  kind: StockMovementKind,
+  meta: { note?: string | null; eventId?: number | null; purchaseOrderId?: number | null },
+): void {
+  if (qty === 0) return;
+  store.stockMovements.push({
+    id: nextId(store, "stockMovements"),
+    ingredientId,
+    qty,
+    kind,
+    note: meta.note ?? null,
+    eventId: meta.eventId ?? null,
+    purchaseOrderId: meta.purchaseOrderId ?? null,
+    createdAt: nowIso(),
+  });
+}
+
+function toStockMovement(store: Store, row: Store["stockMovements"][number]): StockMovement {
+  const ing = store.ingredients.find((item) => item.id === row.ingredientId);
+  const event = row.eventId ? store.events.find((item) => item.id === row.eventId) : undefined;
+  return {
+    id: row.id,
+    ingredientId: row.ingredientId,
+    ingredientName: ing?.name ?? "Ingrediente",
+    unit: ing?.unit ?? "unidad",
+    qty: row.qty,
+    kind: row.kind,
+    note: row.note,
+    eventId: row.eventId,
+    eventTitle: event?.title ?? null,
+    purchaseOrderId: row.purchaseOrderId,
+    createdAt: row.createdAt,
+  };
+}
+
+function toPurchaseOrder(store: Store, row: Store["purchaseOrders"][number]): PurchaseOrder {
+  const supplier = row.supplierId ? store.suppliers.find((item) => item.id === row.supplierId) : undefined;
+  const event = row.eventId ? store.events.find((item) => item.id === row.eventId) : undefined;
+  return {
+    id: row.id,
+    supplierId: row.supplierId,
+    supplierName: supplier?.name ?? null,
+    eventId: row.eventId,
+    eventTitle: event?.title ?? null,
+    status: row.status,
+    invoiceNumber: row.invoiceNumber,
+    invoiceTotal: row.invoiceTotal,
+    notes: row.notes,
+    orderedAt: row.orderedAt,
+    receivedAt: row.receivedAt,
+    items: row.items.map((item) => ({
+      id: item.id,
+      ingredientId: item.ingredientId,
+      name: store.ingredients.find((ing) => ing.id === item.ingredientId)?.name ?? "Ingrediente",
+      quantity: item.quantity,
+      unit: item.unit,
+      unitPrice: item.unitPrice,
+      receivedQty: item.receivedQty,
+    })),
+  };
+}
+
 export const local = {
   health: () => ({ ok: true, db: false }),
 
@@ -587,11 +724,16 @@ export const local = {
       unit: body.unit,
       supplierId: body.supplierId ?? null,
       unitPrice: body.unitPrice ?? null,
-      stockQty: body.stockQty ?? 0,
+      stockQty: 0,
       createdAt: nowIso(),
       updatedAt: nowIso(),
     };
     store.ingredients.push(row);
+    const initial = Math.max(0, body.stockQty ?? 0);
+    if (initial > 0) {
+      applyLocalDelta(store, row.id, initial, "entrada", { note: "Stock inicial" });
+      row.stockQty = store.ingredients.find((ing) => ing.id === row.id)?.stockQty ?? initial;
+    }
     if (row.unitPrice != null) {
       store.ingredientPrices.push({
         id: nextId(store, "ingredientPrices"),
@@ -608,15 +750,20 @@ export const local = {
     const idx = store.ingredients.findIndex((i) => i.id === id);
     if (idx < 0) fail("Ingrediente no encontrado");
     const prev = store.ingredients[idx];
+    const desiredStock = Math.max(0, body.stockQty ?? prev.stockQty ?? 0);
+    const stockDelta = roundQty(desiredStock - (prev.stockQty ?? 0));
     store.ingredients[idx] = {
       ...prev,
       name: body.name,
       unit: body.unit,
       supplierId: body.supplierId ?? null,
       unitPrice: body.unitPrice ?? null,
-      stockQty: body.stockQty ?? prev.stockQty ?? 0,
+      stockQty: desiredStock,
       updatedAt: nowIso(),
     };
+    if (stockDelta !== 0) {
+      logLocalMovement(store, id, stockDelta, "ajuste", { note: "Ajuste desde el catálogo" });
+    }
     if (body.unitPrice != null && body.unitPrice !== prev.unitPrice) {
       store.ingredientPrices.push({
         id: nextId(store, "ingredientPrices"),
@@ -798,6 +945,12 @@ export const local = {
     store.events = store.events.filter((e) => e.id !== id);
     store.quotes = store.quotes.filter((q) => q.eventId !== id);
     store.shoppingLists = store.shoppingLists.filter((l) => l.eventId !== id);
+    store.purchaseOrders = store.purchaseOrders.map((order) =>
+      order.eventId === id ? { ...order, eventId: null } : order,
+    );
+    store.stockMovements = store.stockMovements.map((movement) =>
+      movement.eventId === id ? { ...movement, eventId: null } : movement,
+    );
     write(store);
     return { ok: true };
   },
@@ -883,21 +1036,23 @@ export const local = {
         const current = list.items.find((i) => i.id === patch.id);
         if (!current) continue;
         if (current.purchased !== patch.purchased) {
-          const ingIdx = store.ingredients.findIndex((ing) => ing.id === current.ingredientId);
-          if (ingIdx >= 0) {
-            const ing = store.ingredients[ingIdx];
-            store.ingredients[ingIdx] = {
-              ...ing,
-              stockQty: applyPurchaseToStock(
-                ing.stockQty ?? 0,
-                ing.unit,
-                current.quantity,
-                current.unit,
-                current.purchased,
-                patch.purchased,
-              ),
-              updatedAt: nowIso(),
-            };
+          const ing = store.ingredients.find((item) => item.id === current.ingredientId);
+          if (ing) {
+            const nextStock = applyPurchaseToStock(
+              ing.stockQty ?? 0,
+              ing.unit,
+              current.quantity,
+              current.unit,
+              current.purchased,
+              patch.purchased,
+            );
+            const delta = roundQty(nextStock - (ing.stockQty ?? 0));
+            if (delta !== 0) {
+              applyLocalDelta(store, ing.id, delta, delta > 0 ? "recepcion" : "ajuste", {
+                note: delta > 0 ? "Marcado en la lista de compras" : "Desmarcado en la lista de compras",
+                eventId,
+              });
+            }
           }
         }
         list.items = list.items.map((i) =>
@@ -1240,5 +1395,168 @@ export const local = {
     const token = await createLocalSession(store, row.id);
     write(store);
     return { user: toPublicUser(row), token };
+  },
+
+  listStockMovements(ingredientId?: number): StockMovement[] {
+    const store = read();
+    return store.stockMovements
+      .filter((row) => (ingredientId ? row.ingredientId === ingredientId : true))
+      .slice()
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, 50)
+      .map((row) => toStockMovement(store, row));
+  },
+
+  createStockMovement(body: {
+    ingredientId: number;
+    kind: StockMovementKind;
+    qty: number;
+    note?: string | null;
+    eventId?: number | null;
+  }): StockMovement {
+    if (!isStockMovementKind(body.kind)) fail("Tipo de movimiento no válido");
+    const delta = movementDelta(body.kind, body.qty);
+    if (delta === 0) fail("La cantidad debe ser distinta de cero");
+    const store = read();
+    const applied = applyLocalDelta(store, body.ingredientId, delta, body.kind, {
+      note: body.note?.trim() || null,
+      eventId: body.eventId ?? null,
+    });
+    if (applied === 0) fail("El stock no cambió. Revisa la cantidad.");
+    write(store);
+    const row = store.stockMovements[store.stockMovements.length - 1];
+    return toStockMovement(store, row);
+  },
+
+  listPurchaseOrders(eventId?: number): PurchaseOrder[] {
+    const store = read();
+    return store.purchaseOrders
+      .filter((order) => (eventId ? order.eventId === eventId : true))
+      .slice()
+      .sort((a, b) => b.orderedAt.localeCompare(a.orderedAt))
+      .map((order) => toPurchaseOrder(store, order));
+  },
+
+  createPurchaseOrders(eventId: number): PurchaseOrder[] {
+    const store = read();
+    if (store.purchaseOrders.some((order) => order.eventId === eventId && isOpenPurchaseStatus(order.status))) {
+      fail("Ya hay una orden abierta para este evento. Recíbela o cancélala antes de crear otra.");
+    }
+    const list = store.shoppingLists.find((item) => item.eventId === eventId);
+    if (!list) fail("No hay lista de compras. Genérala primero.");
+    const groups = pendingOrderGroups(
+      list.items.map((item) => {
+        const ing = store.ingredients.find((row) => row.id === item.ingredientId);
+        return {
+          ingredientId: item.ingredientId,
+          name: item.name,
+          unit: item.unit,
+          quantity: item.quantity,
+          unitPrice: ing?.unitPrice ?? item.unitPrice,
+          supplierId: ing?.supplierId ?? item.supplierId,
+          purchased: item.purchased,
+          catalogUnit: ing?.unit ?? item.unit,
+        };
+      }),
+    );
+    if (!groups.length) fail("No hay ítems pendientes para ordenar.");
+    const created: Store["purchaseOrders"] = [];
+    for (const group of groups) {
+      const order: Store["purchaseOrders"][number] = {
+        id: nextId(store, "purchaseOrders"),
+        supplierId: group.supplierId,
+        eventId,
+        status: "enviada",
+        invoiceNumber: null,
+        invoiceTotal: null,
+        notes: null,
+        orderedAt: nowIso(),
+        receivedAt: null,
+        createdAt: nowIso(),
+        updatedAt: nowIso(),
+        items: group.lines.map((line) => ({
+          id: nextId(store, "purchaseOrderItems"),
+          ingredientId: line.ingredientId,
+          quantity: line.quantity,
+          unit: line.unit,
+          unitPrice: line.unitPrice,
+          receivedQty: 0,
+        })),
+      };
+      store.purchaseOrders.push(order);
+      created.push(order);
+    }
+    write(store);
+    return created.map((order) => toPurchaseOrder(store, order));
+  },
+
+  receivePurchaseOrder(
+    id: number,
+    body: {
+      invoiceNumber?: string | null;
+      invoiceTotal?: number | null;
+      items: Array<{ id: number; receivedQty: number }>;
+    },
+  ): PurchaseOrder {
+    const store = read();
+    const order = store.purchaseOrders.find((row) => row.id === id);
+    if (!order) fail("Orden no encontrada");
+    if (order.status === "cancelada") fail("La orden está cancelada");
+    const requested = new Map(body.items.map((item) => [item.id, item.receivedQty]));
+    const list = order.eventId ? store.shoppingLists.find((item) => item.eventId === order.eventId) : undefined;
+    let receivedSomething = false;
+    for (const item of order.items) {
+      const target = requested.has(item.id) ? (requested.get(item.id) as number) : item.quantity;
+      if (target + 1e-9 < item.receivedQty) fail("No se puede recibir menos de lo ya ingresado");
+      const add = roundQty(target - item.receivedQty);
+      if (!(add > 0)) continue;
+      const line = list?.items.find((row) => row.ingredientId === item.ingredientId);
+      const skipStock = Boolean(line?.purchased) && item.receivedQty === 0;
+      if (!skipStock) {
+        const ing = store.ingredients.find((row) => row.id === item.ingredientId);
+        if (!ing) fail("Ingrediente no encontrado");
+        const delta = convertQuantity(add, item.unit, ing.unit);
+        if (delta == null) fail(`No se puede sumar ${ing.name}: la unidad de la orden no coincide con el catálogo`);
+        applyLocalDelta(store, ing.id, delta, "recepcion", {
+          note: `Recepción orden #${id}`,
+          eventId: order.eventId,
+          purchaseOrderId: id,
+        });
+      }
+      item.receivedQty = roundQty(item.receivedQty + add);
+      if (list) {
+        list.items = list.items.map((row) =>
+          row.ingredientId === item.ingredientId ? { ...row, purchased: true } : row,
+        );
+      }
+      receivedSomething = true;
+    }
+    if (!receivedSomething) fail("Indica cuánto recibiste");
+    const complete = order.items.every((item) => item.receivedQty + 1e-9 >= item.quantity);
+    order.status = complete ? "recibida" : "enviada";
+    order.receivedAt = complete ? nowIso() : order.receivedAt;
+    if (body.invoiceNumber != null && String(body.invoiceNumber).trim() !== "") {
+      order.invoiceNumber = String(body.invoiceNumber).trim();
+    }
+    if (body.invoiceTotal != null && body.invoiceTotal !== ("" as unknown)) {
+      const total = Number(body.invoiceTotal);
+      if (Number.isFinite(total)) order.invoiceTotal = total;
+    }
+    order.updatedAt = nowIso();
+    write(store);
+    return toPurchaseOrder(store, order);
+  },
+
+  cancelPurchaseOrder(id: number): PurchaseOrder {
+    const store = read();
+    const order = store.purchaseOrders.find((row) => row.id === id);
+    if (!order) fail("Orden no encontrada");
+    if (order.items.some((item) => item.receivedQty > 0)) {
+      fail("Ya hay cantidades recibidas. No se puede cancelar.");
+    }
+    order.status = "cancelada";
+    order.updatedAt = nowIso();
+    write(store);
+    return toPurchaseOrder(store, order);
   },
 };
