@@ -6,6 +6,7 @@ import {
   toDatetimeLocal,
   type Client,
   type Ingredient,
+  type PurchaseOrder,
   type QuoteSummary,
   type Recipe,
 } from "../api";
@@ -15,6 +16,7 @@ import { PageHeader } from "../components/EmptyState";
 import { QuoteBadge } from "../components/StatusBadge";
 import { recipeFitsService } from "../../shared/recipeMeta";
 import { estimateFoodCost } from "../../shared/shopping";
+import { buildEventOperatingResult } from "../../shared/procurement";
 import {
   REPEAT_INTERVALS,
   REPEAT_INTERVAL_LABELS,
@@ -104,6 +106,7 @@ export function EventDetailPage() {
   const [repeatKind, setRepeatKind] = useState<RepeatInterval | "">("");
   const [repeatExtra, setRepeatExtra] = useState(3);
   const [eventQuotes, setEventQuotes] = useState<QuoteSummary[]>([]);
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
 
   const fechaParam = searchParams.get("fecha");
   const duplicarParam = searchParams.get("duplicar");
@@ -291,6 +294,18 @@ export function EventDetailPage() {
   const salePrice = estimatedCost === "" ? 0 : Number(estimatedCost);
   const marginPct =
     salePrice > 0 && totalCost > 0 ? Math.round(((salePrice - totalCost) / salePrice) * 100) : null;
+  const operating = useMemo(() => {
+    const acceptedRevenue = eventQuotes
+      .filter((quote) => quote.status === "aceptada")
+      .reduce((sum, quote) => sum + quoteMoney(quote).total, 0);
+    return buildEventOperatingResult({
+      acceptedRevenue,
+      estimatedSale: salePrice,
+      estimatedFood: foodCost,
+      expenses,
+      orders: purchaseOrders,
+    });
+  }, [eventQuotes, salePrice, foodCost, expenses, purchaseOrders]);
   const quoteMoneyTotals = useMemo(() => clientMoneyFromQuotes(eventQuotes), [eventQuotes]);
   const latestQuoteMoney = eventQuotes[0] ? quoteMoney(eventQuotes[0]) : null;
 
@@ -438,11 +453,14 @@ export function EventDetailPage() {
   useEffect(() => {
     if (!eventId || isNew) {
       setEventQuotes([]);
+      setPurchaseOrders([]);
       return;
     }
     let alive = true;
-    void api.listQuotes().then((rows) => {
-      if (alive) setEventQuotes(rows.filter((q) => q.eventId === eventId));
+    void Promise.all([api.listQuotes(), api.listPurchaseOrders(eventId)]).then(([rows, orders]) => {
+      if (!alive) return;
+      setEventQuotes(rows.filter((q) => q.eventId === eventId));
+      setPurchaseOrders(orders);
     });
     return () => {
       alive = false;
@@ -596,6 +614,53 @@ export function EventDetailPage() {
               )}
             </li>
           </ul>
+        </section>
+      ) : null}
+
+      {!isNew && eventId ? (
+        <section className="panel" style={{ marginBottom: 16 }}>
+          <h2 style={{ marginTop: 0 }}>Resultado del evento</h2>
+          <div className="stat-grid">
+            <div className="stat">
+              <strong>{operating.revenue > 0 ? formatMoney(operating.revenue) : "—"}</strong>
+              <span>
+                {operating.revenueSource === "aceptada"
+                  ? "Venta aceptada"
+                  : operating.revenueSource === "estimada"
+                    ? "Venta estimada"
+                    : "Sin venta"}
+              </span>
+            </div>
+            <div className="stat">
+              <strong>{formatMoney(operating.estimatedFood)}</strong>
+              <span>Ingredientes estimados</span>
+            </div>
+            <div className="stat">
+              <strong>{formatMoney(operating.actualFood)}</strong>
+              <span>Compras recibidas</span>
+            </div>
+            <div className="stat">
+              <strong>{formatMoney(operating.otherCosts)}</strong>
+              <span>Otros gastos</span>
+            </div>
+            <div className="stat">
+              <strong>{operating.margin == null ? "—" : formatMoney(operating.margin)}</strong>
+              <span>
+                Margen{operating.marginPct != null ? ` ${operating.marginPct}%` : ""}
+              </span>
+            </div>
+          </div>
+          <p className="meta">
+            El margen resta lo recibido en órdenes y los gastos del evento
+            {operating.revenueSource === "aceptada" ? " a la cotización aceptada" : " a la venta estimada"}.
+            {operating.invoiced > 0 ? ` Facturas de proveedor: ${formatMoney(operating.invoiced)}.` : ""}
+            {operating.openOrders > 0
+              ? ` Hay ${operating.openOrders} orden(es) sin cerrar.`
+              : ""}
+          </p>
+          <Link className="btn" to={`/compras/${eventId}`}>
+            Ver compras y órdenes
+          </Link>
         </section>
       ) : null}
 

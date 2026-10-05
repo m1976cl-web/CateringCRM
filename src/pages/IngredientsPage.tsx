@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, formatDateOnly, formatMoney, type Ingredient, type Supplier } from "../api";
+import { api, formatDateOnly, formatMoney, type Ingredient, type StockMovement, type Supplier } from "../api";
+import { STOCK_KIND_LABELS, type StockMovementKind } from "../../shared/procurement";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { EmptyState, PageHeader } from "../components/EmptyState";
 import { FormField } from "../components/FormField";
@@ -22,6 +23,10 @@ export function IngredientsPage() {
   const [saving, setSaving] = useState(false);
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [query, setQuery] = useState("");
+  const [movements, setMovements] = useState<StockMovement[]>([]);
+  const [moveKind, setMoveKind] = useState<StockMovementKind>("entrada");
+  const [moveQty, setMoveQty] = useState("");
+  const [moveNote, setMoveNote] = useState("");
 
   async function load() {
     setLoading(true);
@@ -44,6 +49,17 @@ export function IngredientsPage() {
   function reset() {
     setEditingId(null);
     setForm(blank);
+    setMovements([]);
+    setMoveQty("");
+    setMoveNote("");
+  }
+
+  async function loadMovements(ingredientId: number) {
+    try {
+      setMovements(await api.listStockMovements(ingredientId));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo cargar la bodega");
+    }
   }
 
   function startEdit(row: Ingredient) {
@@ -55,6 +71,33 @@ export function IngredientsPage() {
       unitPrice: row.unitPrice != null ? String(row.unitPrice) : "",
       stockQty: String(row.stockQty ?? 0),
     });
+    void loadMovements(row.id);
+  }
+
+  async function onMovement() {
+    if (!editingId) return;
+    if (!(Number(moveQty) > 0)) {
+      setError("Indica una cantidad mayor que cero");
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.createStockMovement({
+        ingredientId: editingId,
+        kind: moveKind,
+        qty: Number(moveQty),
+        note: moveNote.trim() || null,
+      });
+      setMoveQty("");
+      setMoveNote("");
+      await Promise.all([load(), loadMovements(editingId)]);
+      const fresh = (await api.listIngredients()).find((row) => row.id === editingId);
+      if (fresh) setForm((prev) => ({ ...prev, stockQty: String(fresh.stockQty ?? 0) }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo registrar el movimiento");
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function onSubmit(e: React.FormEvent) {
@@ -107,6 +150,7 @@ export function IngredientsPage() {
       {error ? <div className="error-box">{error}</div> : null}
 
       <div className="split">
+        <div>
         <form className="panel form-grid" onSubmit={onSubmit}>
           <h2>{editingId ? "Editar" : "Nuevo ingrediente"}</h2>
           <FormField label="Nombre *">
@@ -142,7 +186,7 @@ export function IngredientsPage() {
           </div>
           <FormField
             label="Stock en bodega"
-            hint="La lista de compras resta este stock de lo que hay que comprar."
+            hint="Al guardar un número distinto queda un ajuste. Entradas, mermas y reservas se anotan abajo."
           >
             <input
               type="number"
@@ -186,6 +230,53 @@ export function IngredientsPage() {
             ) : null}
           </div>
         </form>
+        {editingId ? (
+          <section className="panel form-grid" style={{ marginTop: 16 }}>
+              <h3 style={{ marginBottom: 0 }}>Movimiento de bodega</h3>
+              <div className="grid-2">
+                <FormField label="Tipo">
+                  <select
+                    value={moveKind}
+                    onChange={(e) => setMoveKind(e.target.value as StockMovementKind)}
+                  >
+                    <option value="entrada">Entrada</option>
+                    <option value="merma">Merma</option>
+                    <option value="reserva">Reserva</option>
+                  </select>
+                </FormField>
+                <FormField label={`Cantidad (${form.unit})`}>
+                  <input
+                    type="number"
+                    min="0.001"
+                    step="0.001"
+                    value={moveQty}
+                    onChange={(e) => setMoveQty(e.target.value)}
+                    required
+                  />
+                </FormField>
+              </div>
+              <FormField label="Nota">
+                <input value={moveNote} onChange={(e) => setMoveNote(e.target.value)} />
+              </FormField>
+              <button className="btn" type="button" disabled={saving} onClick={() => void onMovement()}>
+                Registrar movimiento
+              </button>
+              {movements.length ? (
+                <ul className="checklist">
+                  {movements.slice(0, 8).map((movement) => (
+                    <li key={movement.id}>
+                      {movement.qty > 0 ? "+" : ""}
+                      {movement.qty} {movement.unit} · {STOCK_KIND_LABELS[movement.kind]}
+                      {movement.note ? ` · ${movement.note}` : ""}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="meta">Todavía no hay movimientos de este ingrediente.</p>
+              )}
+          </section>
+        ) : null}
+        </div>
 
         <section className="panel">
           <h2>Catálogo</h2>
