@@ -604,9 +604,16 @@ export function EventDetailPage() {
           <FormField label="Título *">
             <input value={title} onChange={(e) => setTitle(e.target.value)} required />
           </FormField>
-          <FormField label="Cliente *">
+          <FormField
+            label="Cliente *"
+            hint={
+              clients.length === 0
+                ? "Todavía no hay clientes. Créalos primero y vuelve a este formulario."
+                : undefined
+            }
+          >
             <select value={clientId} onChange={(e) => setClientId(e.target.value)} required>
-              <option value="">Elegir…</option>
+              <option value="">{clients.length === 0 ? "Sin clientes" : "Elegir…"}</option>
               {clients.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
@@ -615,6 +622,11 @@ export function EventDetailPage() {
             </select>
           </FormField>
         </div>
+        {clients.length === 0 ? (
+          <Link className="btn" to="/clientes">
+            Ir a clientes
+          </Link>
+        ) : null}
 
         <div className="grid-3">
           <FormField label="Fecha y hora *">
