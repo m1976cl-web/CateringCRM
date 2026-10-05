@@ -98,9 +98,12 @@ export function HomePage() {
         <section className="panel" style={{ marginBottom: 16 }}>
           <h2>Empieza aquí</h2>
           <p className="meta">
-            Aún no hay datos. Registra clientes, ingredientes y recetas, y crea tu primer evento
-            para generar listas de compras y cotizaciones.
+            El CRM está vacío. El primer paso es un cliente: sin cliente no se puede guardar un
+            evento, ni armar compras o cotizaciones.
           </p>
+          <Link className="btn primary" to="/clientes">
+            Crear el primer cliente
+          </Link>
         </section>
       ) : null}
 
