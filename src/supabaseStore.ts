@@ -1,4 +1,13 @@
-import { applyPurchaseToStock, buildShoppingLines, quantityAfterStock } from "../shared/shopping";
+import { applyPurchaseToStock, buildShoppingLines, convertQuantity, quantityAfterStock, roundQty } from "../shared/shopping";
+import {
+  clampStock,
+  isOpenPurchaseStatus,
+  isStockMovementKind,
+  movementDelta,
+  pendingOrderGroups,
+  type PurchaseOrderStatus,
+  type StockMovementKind,
+} from "../shared/procurement";
 import {
   quoteTotal,
   type ClientInput,
@@ -37,7 +46,9 @@ import type {
   EventDetail,
   EventSummary,
   Ingredient,
+  PurchaseOrder,
   QuoteDetail,
+  StockMovement,
   QuotePayment,
   QuoteSummary,
   Recipe,
@@ -185,6 +196,56 @@ function assertOk<T>(data: T | null, error: { message: string } | null, fallback
 
 function iso(value: string | Date): string {
   return typeof value === "string" ? value : value.toISOString();
+}
+
+async function applyCloudDelta(
+  ingredientId: number,
+  delta: number,
+  kind: StockMovementKind,
+  meta: { note?: string | null; eventId?: number | null; purchaseOrderId?: number | null },
+): Promise<number> {
+  const db = getSupabase();
+  const { data, error } = await db
+    .from("ingredients")
+    .select("id, stock_qty")
+    .eq("id", ingredientId)
+    .maybeSingle();
+  const ing = assertOk(data as { id: number; stock_qty: number | null } | null, error, "Ingrediente no encontrado");
+  const { next, applied } = clampStock(ing.stock_qty ?? 0, delta);
+  if (applied === 0) return 0;
+  const { error: upErr } = await db
+    .from("ingredients")
+    .update({ stock_qty: next, updated_at: new Date().toISOString() })
+    .eq("id", ingredientId);
+  if (upErr) throw new Error(upErr.message);
+  const { error: movErr } = await db.from("stock_movements").insert({
+    ingredient_id: ingredientId,
+    qty: applied,
+    kind,
+    note: meta.note ?? null,
+    event_id: meta.eventId ?? null,
+    purchase_order_id: meta.purchaseOrderId ?? null,
+  });
+  if (movErr) throw new Error(movErr.message);
+  return applied;
+}
+
+async function logCloudMovement(
+  ingredientId: number,
+  qty: number,
+  kind: StockMovementKind,
+  meta: { note?: string | null; eventId?: number | null; purchaseOrderId?: number | null },
+): Promise<void> {
+  if (qty === 0) return;
+  const { error } = await getSupabase().from("stock_movements").insert({
+    ingredient_id: ingredientId,
+    qty,
+    kind,
+    note: meta.note ?? null,
+    event_id: meta.eventId ?? null,
+    purchase_order_id: meta.purchaseOrderId ?? null,
+  });
+  if (error) throw new Error(error.message);
 }
 
 async function syncEventFromQuote(eventId: number, quoteStatus: QuoteStatus) {
@@ -517,6 +578,126 @@ async function loadShoppingList(list: ShoppingListRow): Promise<ShoppingList> {
   };
 }
 
+async function loadCloudOrders(eventId?: number): Promise<PurchaseOrder[]> {
+  const db = getSupabase();
+  let query = db.from("purchase_orders").select("*").order("ordered_at", { ascending: false });
+  if (eventId) query = query.eq("event_id", eventId);
+  const { data, error } = await query;
+  const orders = assertOk(data as Array<{
+    id: number;
+    supplier_id: number | null;
+    event_id: number | null;
+    status: PurchaseOrderStatus;
+    invoice_number: string | null;
+    invoice_total: number | null;
+    notes: string | null;
+    ordered_at: string;
+    received_at: string | null;
+  }> | null, error, "No se pudieron cargar las órdenes");
+  if (!orders.length) return [];
+  const ids = orders.map((order) => order.id);
+  const { data: itemData, error: itemErr } = await db
+    .from("purchase_order_items")
+    .select("*")
+    .in("purchase_order_id", ids);
+  const itemRows = assertOk(itemData as Array<{
+    id: number;
+    purchase_order_id: number;
+    ingredient_id: number;
+    quantity: number;
+    unit: IngredientUnit;
+    unit_price: number;
+    received_qty: number;
+  }> | null, itemErr, "No se pudieron cargar los ítems");
+  const ingredientIds = [...new Set(itemRows.map((item) => item.ingredient_id))];
+  const supplierIds = [...new Set(orders.map((order) => order.supplier_id).filter((id): id is number => id != null))];
+  const eventIds = [...new Set(orders.map((order) => order.event_id).filter((id): id is number => id != null))];
+  const [{ data: ingData }, { data: supplierData }, { data: eventData }] = await Promise.all([
+    ingredientIds.length
+      ? db.from("ingredients").select("id, name").in("id", ingredientIds)
+      : Promise.resolve({ data: [] as Array<{ id: number; name: string }> }),
+    supplierIds.length
+      ? db.from("suppliers").select("id, name").in("id", supplierIds)
+      : Promise.resolve({ data: [] as Array<{ id: number; name: string }> }),
+    eventIds.length
+      ? db.from("events").select("id, title").in("id", eventIds)
+      : Promise.resolve({ data: [] as Array<{ id: number; title: string }> }),
+  ]);
+  const names = new Map((ingData ?? []).map((row) => [row.id, row.name]));
+  const supplierNames = new Map((supplierData ?? []).map((row) => [row.id, row.name]));
+  const eventTitles = new Map((eventData ?? []).map((row) => [row.id, row.title]));
+  return orders.map((order) => ({
+    id: order.id,
+    supplierId: order.supplier_id,
+    supplierName: order.supplier_id ? (supplierNames.get(order.supplier_id) ?? null) : null,
+    eventId: order.event_id,
+    eventTitle: order.event_id ? (eventTitles.get(order.event_id) ?? null) : null,
+    status: order.status,
+    invoiceNumber: order.invoice_number,
+    invoiceTotal: order.invoice_total,
+    notes: order.notes,
+    orderedAt: iso(order.ordered_at),
+    receivedAt: order.received_at ? iso(order.received_at) : null,
+    items: itemRows
+      .filter((item) => item.purchase_order_id === order.id)
+      .map((item) => ({
+        id: item.id,
+        ingredientId: item.ingredient_id,
+        name: names.get(item.ingredient_id) ?? "Ingrediente",
+        quantity: item.quantity,
+        unit: item.unit,
+        unitPrice: item.unit_price,
+        receivedQty: item.received_qty,
+      })),
+  }));
+}
+
+async function loadCloudMovements(ingredientId?: number): Promise<StockMovement[]> {
+  const db = getSupabase();
+  let query = db.from("stock_movements").select("*").order("created_at", { ascending: false }).limit(50);
+  if (ingredientId) query = query.eq("ingredient_id", ingredientId);
+  const { data, error } = await query;
+  const rows = assertOk(data as Array<{
+    id: number;
+    ingredient_id: number;
+    qty: number;
+    kind: StockMovementKind;
+    note: string | null;
+    event_id: number | null;
+    purchase_order_id: number | null;
+    created_at: string;
+  }> | null, error, "No se pudieron cargar los movimientos");
+  if (!rows.length) return [];
+  const ingredientIds = [...new Set(rows.map((row) => row.ingredient_id))];
+  const eventIds = [...new Set(rows.map((row) => row.event_id).filter((id): id is number => id != null))];
+  const [{ data: ingData }, { data: eventData }] = await Promise.all([
+    db.from("ingredients").select("id, name, unit").in("id", ingredientIds),
+    eventIds.length
+      ? db.from("events").select("id, title").in("id", eventIds)
+      : Promise.resolve({ data: [] as Array<{ id: number; title: string }> }),
+  ]);
+  const ings = new Map(
+    (ingData as Array<{ id: number; name: string; unit: IngredientUnit }> | null ?? []).map((row) => [row.id, row]),
+  );
+  const titles = new Map((eventData ?? []).map((row) => [row.id, row.title]));
+  return rows.map((row) => {
+    const ing = ings.get(row.ingredient_id);
+    return {
+      id: row.id,
+      ingredientId: row.ingredient_id,
+      ingredientName: ing?.name ?? "Ingrediente",
+      unit: ing?.unit ?? "unidad",
+      qty: row.qty,
+      kind: row.kind,
+      note: row.note,
+      eventId: row.event_id,
+      eventTitle: row.event_id ? (titles.get(row.event_id) ?? null) : null,
+      purchaseOrderId: row.purchase_order_id,
+      createdAt: iso(row.created_at),
+    };
+  });
+}
+
 export const cloud = {
   health: async () => {
     const db = getSupabase();
@@ -757,11 +938,16 @@ export const cloud = {
         unit: body.unit,
         supplier_id: body.supplierId ?? null,
         unit_price: body.unitPrice ?? null,
-        stock_qty: body.stockQty ?? 0,
+        stock_qty: 0,
       })
       .select("*")
       .single();
     const row = assertOk(data as IngredientRow | null, error, "No se pudo crear el ingrediente");
+    const initial = Math.max(0, body.stockQty ?? 0);
+    if (initial > 0) {
+      await applyCloudDelta(row.id, initial, "entrada", { note: "Stock inicial" });
+      row.stock_qty = initial;
+    }
     let supplierName: string | null = null;
     if (row.supplier_id) {
       const { data: s } = await getSupabase()
@@ -797,13 +983,17 @@ export const cloud = {
         unit: body.unit,
         supplier_id: body.supplierId ?? null,
         unit_price: nextPrice,
-        stock_qty: body.stockQty ?? 0,
+        stock_qty: Math.max(0, body.stockQty ?? prev.stock_qty ?? 0),
         updated_at: new Date().toISOString(),
       })
       .eq("id", id)
       .select("*")
       .single();
     const row = assertOk(data as IngredientRow | null, error, "Ingrediente no encontrado");
+    const stockDelta = roundQty((row.stock_qty ?? 0) - (prev.stock_qty ?? 0));
+    if (stockDelta !== 0) {
+      await logCloudMovement(id, stockDelta, "ajuste", { note: "Ajuste desde el catálogo" });
+    }
     let supplierName: string | null = null;
     if (row.supplier_id) {
       const { data: s } = await db.from("suppliers").select("name").eq("id", row.supplier_id).maybeSingle();
@@ -1165,11 +1355,13 @@ export const cloud = {
               current.purchased,
               patch.purchased,
             );
-            const { error: stockErr } = await db
-              .from("ingredients")
-              .update({ stock_qty: nextStock })
-              .eq("id", ing.id);
-            if (stockErr) throw new Error(stockErr.message);
+            const delta = roundQty(nextStock - (ing.stock_qty ?? 0));
+            if (delta !== 0) {
+              await applyCloudDelta(ing.id, delta, delta > 0 ? "recepcion" : "ajuste", {
+                note: delta > 0 ? "Marcado en la lista de compras" : "Desmarcado en la lista de compras",
+                eventId,
+              });
+            }
           }
         }
         const { error: pErr } = await db
@@ -1529,6 +1721,217 @@ export const cloud = {
       p_new_hash: hashed.hash,
     });
     return { user: toPublicUser(res.user), token: res.token };
+  },
+
+  listStockMovements(ingredientId?: number) {
+    return loadCloudMovements(ingredientId);
+  },
+
+  async createStockMovement(body: {
+    ingredientId: number;
+    kind: StockMovementKind;
+    qty: number;
+    note?: string | null;
+    eventId?: number | null;
+  }): Promise<StockMovement> {
+    if (!isStockMovementKind(body.kind)) fail("Tipo de movimiento no válido");
+    const delta = movementDelta(body.kind, body.qty);
+    if (delta === 0) fail("La cantidad debe ser distinta de cero");
+    const applied = await applyCloudDelta(body.ingredientId, delta, body.kind, {
+      note: body.note?.trim() || null,
+      eventId: body.eventId ?? null,
+    });
+    if (applied === 0) fail("El stock no cambió. Revisa la cantidad.");
+    const rows = await loadCloudMovements(body.ingredientId);
+    const row = rows[0];
+    if (!row) fail("No se pudo registrar el movimiento");
+    return row;
+  },
+
+  listPurchaseOrders(eventId?: number) {
+    return loadCloudOrders(eventId);
+  },
+
+  async createPurchaseOrders(eventId: number): Promise<PurchaseOrder[]> {
+    const db = getSupabase();
+    const existing = await loadCloudOrders(eventId);
+    if (existing.some((order) => isOpenPurchaseStatus(order.status))) {
+      fail("Ya hay una orden abierta para este evento. Recíbela o cancélala antes de crear otra.");
+    }
+    const { data: list, error: listErr } = await db
+      .from("shopping_lists")
+      .select("id")
+      .eq("event_id", eventId)
+      .maybeSingle();
+    const shopping = assertOk(list as { id: number } | null, listErr, "No hay lista de compras. Genérala primero.");
+    const { data: itemData, error: itemErr } = await db
+      .from("shopping_list_items")
+      .select("*")
+      .eq("shopping_list_id", shopping.id);
+    const items = assertOk(itemData as Array<{
+      ingredient_id: number;
+      quantity: number;
+      unit: IngredientUnit;
+      purchased: boolean;
+    }> | null, itemErr, "No se pudo leer la lista");
+    const ingredientIds = [...new Set(items.map((item) => item.ingredient_id))];
+    const { data: ingData } = ingredientIds.length
+      ? await db.from("ingredients").select("id, name, unit, unit_price, supplier_id").in("id", ingredientIds)
+      : { data: [] as Array<{ id: number; name: string; unit: IngredientUnit; unit_price: number | null; supplier_id: number | null }> };
+    const byId = new Map((ingData ?? []).map((row) => [row.id, row]));
+    const groups = pendingOrderGroups(
+      items.map((item) => {
+        const ing = byId.get(item.ingredient_id);
+        return {
+          ingredientId: item.ingredient_id,
+          name: ing?.name ?? "Ingrediente",
+          unit: item.unit,
+          quantity: item.quantity,
+          unitPrice: ing?.unit_price ?? null,
+          supplierId: ing?.supplier_id ?? null,
+          purchased: item.purchased,
+          catalogUnit: ing?.unit ?? item.unit,
+        };
+      }),
+    );
+    if (!groups.length) fail("No hay ítems pendientes para ordenar.");
+    const createdIds: number[] = [];
+    for (const group of groups) {
+      const { data, error } = await db
+        .from("purchase_orders")
+        .insert({ supplier_id: group.supplierId, event_id: eventId, status: "enviada" })
+        .select("id")
+        .single();
+      const order = assertOk(data as { id: number } | null, error, "No se pudo crear la orden");
+      const { error: linesErr } = await db.from("purchase_order_items").insert(
+        group.lines.map((line) => ({
+          purchase_order_id: order.id,
+          ingredient_id: line.ingredientId,
+          quantity: line.quantity,
+          unit: line.unit,
+          unit_price: line.unitPrice,
+          received_qty: 0,
+        })),
+      );
+      if (linesErr) throw new Error(linesErr.message);
+      createdIds.push(order.id);
+    }
+    const orders = await loadCloudOrders(eventId);
+    return orders.filter((order) => createdIds.includes(order.id));
+  },
+
+  async receivePurchaseOrder(
+    id: number,
+    body: {
+      invoiceNumber?: string | null;
+      invoiceTotal?: number | null;
+      items: Array<{ id: number; receivedQty: number }>;
+    },
+  ): Promise<PurchaseOrder> {
+    const db = getSupabase();
+    const orders = await loadCloudOrders();
+    const order = orders.find((row) => row.id === id);
+    if (!order) fail("Orden no encontrada");
+    if (order.status === "cancelada") fail("La orden está cancelada");
+    const requested = new Map(body.items.map((item) => [item.id, item.receivedQty]));
+    const list = order.eventId
+      ? (
+          await db.from("shopping_lists").select("id").eq("event_id", order.eventId).maybeSingle()
+        ).data as { id: number } | null
+      : null;
+    let receivedSomething = false;
+    for (const item of order.items) {
+      const target = requested.has(item.id) ? (requested.get(item.id) as number) : item.quantity;
+      if (target + 1e-9 < item.receivedQty) fail(`No se puede recibir menos de lo ya ingresado en ${item.name}`);
+      const add = roundQty(target - item.receivedQty);
+      if (!(add > 0)) continue;
+      let alreadyPurchased = false;
+      if (list) {
+        const { data: line } = await db
+          .from("shopping_list_items")
+          .select("purchased")
+          .eq("shopping_list_id", list.id)
+          .eq("ingredient_id", item.ingredientId)
+          .maybeSingle();
+        alreadyPurchased = Boolean((line as { purchased: boolean } | null)?.purchased);
+      }
+      if (!(alreadyPurchased && item.receivedQty === 0)) {
+        const { data: ing, error: ingErr } = await db
+          .from("ingredients")
+          .select("unit, name")
+          .eq("id", item.ingredientId)
+          .maybeSingle();
+        const catalog = assertOk(
+          ing as { unit: IngredientUnit; name: string } | null,
+          ingErr,
+          "Ingrediente no encontrado",
+        );
+        const delta = convertQuantity(add, item.unit, catalog.unit);
+        if (delta == null) {
+          fail(`No se puede sumar ${catalog.name}: la unidad de la orden no coincide con el catálogo`);
+        }
+        await applyCloudDelta(item.ingredientId, delta, "recepcion", {
+          note: `Recepción orden #${id}`,
+          eventId: order.eventId,
+          purchaseOrderId: id,
+        });
+      }
+      const { error: qtyErr } = await db
+        .from("purchase_order_items")
+        .update({ received_qty: roundQty(item.receivedQty + add) })
+        .eq("id", item.id);
+      if (qtyErr) throw new Error(qtyErr.message);
+      if (list) {
+        await db
+          .from("shopping_list_items")
+          .update({ purchased: true })
+          .eq("shopping_list_id", list.id)
+          .eq("ingredient_id", item.ingredientId);
+      }
+      receivedSomething = true;
+    }
+    if (!receivedSomething) fail("Indica cuánto recibiste");
+    const freshList = await loadCloudOrders(order.eventId ?? undefined);
+    const fresh = freshList.find((row) => row.id === id);
+    if (!fresh) fail("Orden no encontrada");
+    const complete = fresh.items.every((item) => item.receivedQty + 1e-9 >= item.quantity);
+    const invoiceNumber =
+      body.invoiceNumber != null && String(body.invoiceNumber).trim() !== ""
+        ? String(body.invoiceNumber).trim()
+        : fresh.invoiceNumber;
+    const invoiceTotal =
+      body.invoiceTotal != null && Number.isFinite(Number(body.invoiceTotal))
+        ? Number(body.invoiceTotal)
+        : fresh.invoiceTotal;
+    const { error: upErr } = await db
+      .from("purchase_orders")
+      .update({
+        status: complete ? "recibida" : "enviada",
+        received_at: complete ? new Date().toISOString() : fresh.receivedAt,
+        invoice_number: invoiceNumber,
+        invoice_total: invoiceTotal,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", id);
+    if (upErr) throw new Error(upErr.message);
+    const updated = (await loadCloudOrders(order.eventId ?? undefined)).find((row) => row.id === id);
+    if (!updated) fail("Orden no encontrada");
+    return updated;
+  },
+
+  async cancelPurchaseOrder(id: number): Promise<PurchaseOrder> {
+    const orders = await loadCloudOrders();
+    const order = orders.find((row) => row.id === id);
+    if (!order) fail("Orden no encontrada");
+    if (order.items.some((item) => item.receivedQty > 0)) {
+      fail("Ya hay cantidades recibidas. No se puede cancelar.");
+    }
+    const { error } = await getSupabase()
+      .from("purchase_orders")
+      .update({ status: "cancelada", updated_at: new Date().toISOString() })
+      .eq("id", id);
+    if (error) throw new Error(error.message);
+    return { ...order, status: "cancelada" };
   },
 };
 

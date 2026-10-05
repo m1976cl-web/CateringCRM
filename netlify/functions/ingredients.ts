@@ -5,6 +5,7 @@ import { ingredients, suppliers } from "../../db/schema";
 import { isIngredientUnit } from "../../shared/types";
 import { asNumber, error, json, now, readJson } from "./_shared/http";
 import { denyIfUnauthorized } from "./_shared/auth";
+import { applyCatalogDelta } from "./_shared/stock";
 
 export default async (req: Request, _context: Context) => {
   const denied = await denyIfUnauthorized(req);
@@ -49,11 +50,22 @@ export default async (req: Request, _context: Context) => {
         body.unitPrice === null || body.unitPrice === undefined || body.unitPrice === ""
           ? null
           : asNumber(body.unitPrice),
-      stockQty: asNumber(body.stockQty, 0),
+      stockQty: 0,
       createdAt: now(),
       updatedAt: now(),
     })
     .returning();
+
+  const initial = Math.max(0, asNumber(body.stockQty, 0));
+  if (initial > 0) {
+    await applyCatalogDelta({
+      ingredientId: created.id,
+      delta: initial,
+      kind: "entrada",
+      note: "Stock inicial",
+    });
+    created.stockQty = initial;
+  }
 
   return json(created, 201);
 };

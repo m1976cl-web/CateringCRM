@@ -3,8 +3,10 @@ import { eq } from "drizzle-orm";
 import { db } from "../../db";
 import { ingredientPrices, ingredients } from "../../db/schema";
 import { isIngredientUnit } from "../../shared/types";
+import { roundQty } from "../../shared/shopping";
 import { asNumber, error, json, now, parseId, readJson } from "./_shared/http";
 import { denyIfUnauthorized } from "./_shared/auth";
+import { logMovement } from "./_shared/stock";
 
 export default async (req: Request, context: Context) => {
   const denied = await denyIfUnauthorized(req);
@@ -48,6 +50,8 @@ export default async (req: Request, context: Context) => {
         ? null
         : asNumber(body.unitPrice);
 
+    const desiredStock = Math.max(0, asNumber(body.stockQty, current.stockQty ?? 0));
+    const stockDelta = roundQty(desiredStock - (current.stockQty ?? 0));
     const [updated] = await db
       .update(ingredients)
       .set({
@@ -55,13 +59,21 @@ export default async (req: Request, context: Context) => {
         unit: body.unit,
         supplierId,
         unitPrice: nextPrice,
-        stockQty: asNumber(body.stockQty, 0),
+        stockQty: desiredStock,
         updatedAt: now(),
       })
       .where(eq(ingredients.id, id))
       .returning();
 
     if (!updated) return error("Ingrediente no encontrado", 404);
+    if (stockDelta !== 0) {
+      await logMovement({
+        ingredientId: id,
+        qty: stockDelta,
+        kind: "ajuste",
+        note: "Ajuste desde el catálogo",
+      });
+    }
     if (nextPrice != null && nextPrice !== (current.unitPrice ?? null)) {
       await db.insert(ingredientPrices).values({
         ingredientId: id,

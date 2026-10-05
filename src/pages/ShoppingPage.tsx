@@ -5,10 +5,14 @@ import {
   formatDate,
   formatMoney,
   type EventSummary,
+  type PurchaseOrder,
   type ShoppingList,
   type Supplier,
 } from "../api";
 import { EmptyState, PageHeader } from "../components/EmptyState";
+import { useAuth } from "../components/AuthGate";
+import { canEditPrices } from "../../shared/roles";
+import { PURCHASE_ORDER_STATUS_LABELS } from "../../shared/procurement";
 import { SERVICE_TYPE_LABELS } from "../../shared/types";
 import { whatsappPhoneUrl, whatsappTextUrl } from "../whatsapp";
 
@@ -42,6 +46,8 @@ function supplierWhatsApp(
 }
 
 export function ShoppingPage() {
+  const { user } = useAuth();
+  const canBuy = canEditPrices(user.role);
   const { eventId: eventIdParam } = useParams();
   const [events, setEvents] = useState<EventSummary[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -52,6 +58,7 @@ export function ShoppingPage() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [emptyMenu, setEmptyMenu] = useState(false);
+  const [orders, setOrders] = useState<PurchaseOrder[]>([]);
 
   useEffect(() => {
     let alive = true;
@@ -80,6 +87,7 @@ export function ShoppingPage() {
   useEffect(() => {
     if (!selectedId) {
       setList(null);
+      setOrders([]);
       setEmptyMenu(false);
       setMenuCount(0);
       return;
@@ -94,13 +102,18 @@ export function ShoppingPage() {
         if (detail.recipes.length === 0) {
           setEmptyMenu(true);
           setList(null);
+          setOrders(await api.listPurchaseOrders(Number(selectedId)));
           setError("");
           return;
         }
         setEmptyMenu(false);
-        const data = await api.getShoppingList(Number(selectedId));
+        const [data, orderRows] = await Promise.all([
+          api.getShoppingList(Number(selectedId)),
+          api.listPurchaseOrders(Number(selectedId)),
+        ]);
         if (alive) {
           setList(data);
+          setOrders(orderRows);
           setError("");
         }
       } catch (e) {
@@ -158,7 +171,12 @@ export function ShoppingPage() {
         return;
       }
       setEmptyMenu(false);
-      setList(await api.getShoppingList(Number(selectedId), true));
+      const [data, orderRows] = await Promise.all([
+        api.getShoppingList(Number(selectedId), true),
+        api.listPurchaseOrders(Number(selectedId)),
+      ]);
+      setList(data);
+      setOrders(orderRows);
       setError("");
     } catch (e) {
       setError(e instanceof Error ? e.message : "No se pudo regenerar");
@@ -197,6 +215,62 @@ export function ShoppingPage() {
     }
   }
 
+  async function createOrders() {
+    if (!selectedId) return;
+    setBusy(true);
+    try {
+      await api.createPurchaseOrders(Number(selectedId));
+      setOrders(await api.listPurchaseOrders(Number(selectedId)));
+      setError("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo crear la orden");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function receiveOrder(order: PurchaseOrder, form: HTMLFormElement) {
+    const data = new FormData(form);
+    setBusy(true);
+    try {
+      await api.receivePurchaseOrder(order.id, {
+        invoiceNumber: String(data.get("invoiceNumber") ?? ""),
+        invoiceTotal: String(data.get("invoiceTotal") ?? "") === "" ? null : Number(data.get("invoiceTotal")),
+        items: order.items.map((item) => ({
+          id: item.id,
+          receivedQty: Number(data.get(`qty-${item.id}`) ?? item.quantity),
+        })),
+      });
+      const [dataList, orderRows] = await Promise.all([
+        api.getShoppingList(Number(selectedId)),
+        api.listPurchaseOrders(Number(selectedId)),
+      ]);
+      setList(dataList);
+      setOrders(orderRows);
+      setError("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo recibir la orden");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function cancelOrder(id: number) {
+    setBusy(true);
+    try {
+      await api.cancelPurchaseOrder(id);
+      setOrders(await api.listPurchaseOrders(Number(selectedId)));
+      setError("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo cancelar la orden");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const orderTotal = (order: PurchaseOrder) =>
+    order.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
+
   return (
     <div>
       <PageHeader
@@ -229,9 +303,19 @@ export function ShoppingPage() {
             >
               Regenerar desde el menú
             </button>
+            {canBuy ? (
+              <button
+                type="button"
+                className="btn primary"
+                disabled={!selectedId || busy || !list || remaining === 0}
+                onClick={() => void createOrders()}
+              >
+                Crear orden con lo pendiente
+              </button>
+            ) : null}
             <button
               type="button"
-              className="btn primary"
+              className="btn"
               disabled={!list || busy}
               onClick={() => void markAllDone()}
             >
@@ -339,12 +423,95 @@ export function ShoppingPage() {
               );
             })}
             <p className="meta">
+              Si vas a recibir una orden, no marques esos ítems a mano: la recepción los marca y suma la bodega.
+            </p>
+            <p className="meta">
               <Link to={`/eventos/${selectedId}`}>← Volver al evento</Link>
               {" · "}
               <Link to="/recetas">Editar recetas</Link>
             </p>
           </div>
         )
+      ) : null}
+
+      {selectedId && !loading ? (
+        <section className="panel" style={{ marginTop: 16 }}>
+          <h2>Órdenes al proveedor</h2>
+          <p className="meta">
+            Una orden por proveedor con lo que aún no está comprado. Al recibirla puedes anotar el número de factura.
+          </p>
+          {orders.length === 0 ? (
+            <p className="meta">Todavía no hay órdenes para este evento.</p>
+          ) : (
+            orders.map((order) => (
+              <article key={order.id} style={{ marginTop: 16 }}>
+                <div className="page-header" style={{ marginBottom: 8 }}>
+                  <h3 style={{ margin: 0 }}>
+                    {order.supplierName ?? "Sin proveedor"} · {PURCHASE_ORDER_STATUS_LABELS[order.status]}
+                  </h3>
+                  <span className="meta">{formatMoney(order.invoiceTotal ?? orderTotal(order))}</span>
+                </div>
+                <ul className="checklist">
+                  {order.items.map((item) => (
+                    <li key={item.id}>
+                      {item.quantity} {item.unit} {item.name}
+                      {item.receivedQty > 0 ? ` · recibido ${item.receivedQty}` : ""}
+                      {item.unitPrice > 0 ? ` · ${formatMoney(item.quantity * item.unitPrice)}` : ""}
+                    </li>
+                  ))}
+                </ul>
+                {order.invoiceNumber ? <p className="meta">Factura {order.invoiceNumber}</p> : null}
+                {canBuy && (order.status === "enviada" || order.status === "borrador") ? (
+                  <form
+                    className="form-grid"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      void receiveOrder(order, e.currentTarget);
+                    }}
+                  >
+                    {order.items.map((item) => (
+                      <label key={item.id} className="field">
+                        <span className="field-label">
+                          Recibir {item.name} ({item.unit})
+                        </span>
+                        <input
+                          name={`qty-${item.id}`}
+                          type="number"
+                          min={item.receivedQty}
+                          step="0.001"
+                          defaultValue={item.quantity}
+                        />
+                      </label>
+                    ))}
+                    <div className="grid-2">
+                      <label className="field">
+                        <span className="field-label">Nº factura</span>
+                        <input name="invoiceNumber" defaultValue={order.invoiceNumber ?? ""} />
+                      </label>
+                      <label className="field">
+                        <span className="field-label">Total factura</span>
+                        <input name="invoiceTotal" type="number" min={0} step="1" />
+                      </label>
+                    </div>
+                    <div className="page-actions">
+                      <button className="btn primary" type="submit" disabled={busy}>
+                        Recibir
+                      </button>
+                      <button
+                        className="btn"
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void cancelOrder(order.id)}
+                      >
+                        Cancelar orden
+                      </button>
+                    </div>
+                  </form>
+                ) : null}
+              </article>
+            ))
+          )}
+        </section>
       ) : null}
     </div>
   );

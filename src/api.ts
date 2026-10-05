@@ -1,4 +1,5 @@
 import type { DietaryTag, EventExpense, EventStaff, PackingItem } from "../shared/ops";
+import type { PurchaseOrderStatus, StockMovementKind } from "../shared/procurement";
 import type { TeamRole } from "../shared/roles";
 import { unpackRecipeCategory } from "../shared/recipeMeta";
 import type {
@@ -162,6 +163,45 @@ export type QuoteDetail = QuoteSummary & {
   clientEmail: string | null;
   clientCompany: string | null;
   updatedAt: string;
+};
+
+export type StockMovement = {
+  id: number;
+  ingredientId: number;
+  ingredientName: string;
+  unit: IngredientUnit;
+  qty: number;
+  kind: StockMovementKind;
+  note: string | null;
+  eventId: number | null;
+  eventTitle: string | null;
+  purchaseOrderId: number | null;
+  createdAt: string;
+};
+
+export type PurchaseOrderItem = {
+  id: number;
+  ingredientId: number;
+  name: string;
+  quantity: number;
+  unit: IngredientUnit;
+  unitPrice: number;
+  receivedQty: number;
+};
+
+export type PurchaseOrder = {
+  id: number;
+  supplierId: number | null;
+  supplierName: string | null;
+  eventId: number | null;
+  eventTitle: string | null;
+  status: PurchaseOrderStatus;
+  invoiceNumber: string | null;
+  invoiceTotal: number | null;
+  notes: string | null;
+  orderedAt: string;
+  receivedAt: string | null;
+  items: PurchaseOrderItem[];
 };
 
 export type ShoppingList = {
@@ -361,6 +401,44 @@ const remote = {
       body: JSON.stringify(body),
     }),
 
+  listStockMovements: (ingredientId?: number) =>
+    request<StockMovement[]>(
+      `/api/stock-movements${ingredientId ? `?ingredientId=${ingredientId}` : ""}`,
+    ),
+  createStockMovement: (body: {
+    ingredientId: number;
+    kind: StockMovementKind;
+    qty: number;
+    note?: string | null;
+    eventId?: number | null;
+  }) =>
+    request<StockMovement>("/api/stock-movements", { method: "POST", body: JSON.stringify(body) }),
+
+  listPurchaseOrders: (eventId?: number) =>
+    request<PurchaseOrder[]>(`/api/purchase-orders${eventId ? `?eventId=${eventId}` : ""}`),
+  createPurchaseOrders: (eventId: number) =>
+    request<PurchaseOrder[]>("/api/purchase-orders", {
+      method: "POST",
+      body: JSON.stringify({ eventId, fromShopping: true }),
+    }),
+  receivePurchaseOrder: (
+    id: number,
+    body: {
+      invoiceNumber?: string | null;
+      invoiceTotal?: number | null;
+      items: Array<{ id: number; receivedQty: number }>;
+    },
+  ) =>
+    request<PurchaseOrder>(`/api/purchase-orders/${id}?action=receive`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  cancelPurchaseOrder: (id: number) =>
+    request<PurchaseOrder>(`/api/purchase-orders/${id}?action=cancel`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+
   listQuotes: () => request<QuoteSummary[]>("/api/quotes"),
   getQuote: (id: number) => request<QuoteDetail>(`/api/quotes/${id}`),
   createQuote: (body: QuoteInput) =>
@@ -501,6 +579,37 @@ export const api = {
   ),
   updateShoppingList: route(cloud.updateShoppingList, remote.updateShoppingList, (eventId, body) =>
     local.updateShoppingList(eventId, body),
+  ),
+
+  listStockMovements: route(
+    cloud.listStockMovements,
+    remote.listStockMovements,
+    (ingredientId) => local.listStockMovements(ingredientId),
+  ),
+  createStockMovement: route(
+    cloud.createStockMovement,
+    remote.createStockMovement,
+    (body) => local.createStockMovement(body),
+  ),
+  listPurchaseOrders: route(
+    cloud.listPurchaseOrders,
+    remote.listPurchaseOrders,
+    (eventId) => local.listPurchaseOrders(eventId),
+  ),
+  createPurchaseOrders: route(
+    cloud.createPurchaseOrders,
+    remote.createPurchaseOrders,
+    (eventId) => local.createPurchaseOrders(eventId),
+  ),
+  receivePurchaseOrder: route(
+    cloud.receivePurchaseOrder,
+    remote.receivePurchaseOrder,
+    (id, body) => local.receivePurchaseOrder(id, body),
+  ),
+  cancelPurchaseOrder: route(
+    cloud.cancelPurchaseOrder,
+    remote.cancelPurchaseOrder,
+    (id) => local.cancelPurchaseOrder(id),
   ),
 
   listQuotes: route(cloud.listQuotes, remote.listQuotes, () => local.listQuotes()),

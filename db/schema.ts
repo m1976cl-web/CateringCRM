@@ -9,6 +9,7 @@ import {
   timestamp,
   varchar,
 } from "drizzle-orm/pg-core";
+import type { PurchaseOrderStatus, StockMovementKind } from "../shared/procurement";
 import type {
   EventStatus,
   IngredientUnit,
@@ -208,6 +209,52 @@ export const shoppingListItems = pgTable("shopping_list_items", {
   quantity: doublePrecision("quantity").notNull(),
   unit: varchar("unit", { length: 20 }).$type<IngredientUnit>().notNull(),
   purchased: boolean("purchased").notNull().default(false),
+});
+
+export const purchaseOrders = pgTable("purchase_orders", {
+  id: serial().primaryKey(),
+  supplierId: integer("supplier_id").references(() => suppliers.id, { onDelete: "set null" }),
+  eventId: integer("event_id").references(() => events.id, { onDelete: "set null" }),
+  status: varchar("status", { length: 20 })
+    .$type<PurchaseOrderStatus>()
+    .notNull()
+    .default("enviada"),
+  invoiceNumber: varchar("invoice_number", { length: 60 }),
+  invoiceTotal: doublePrecision("invoice_total"),
+  notes: text("notes"),
+  orderedAt: timestamp("ordered_at").notNull().defaultNow(),
+  receivedAt: timestamp("received_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const purchaseOrderItems = pgTable("purchase_order_items", {
+  id: serial().primaryKey(),
+  purchaseOrderId: integer("purchase_order_id")
+    .notNull()
+    .references(() => purchaseOrders.id, { onDelete: "cascade" }),
+  ingredientId: integer("ingredient_id")
+    .notNull()
+    .references(() => ingredients.id, { onDelete: "restrict" }),
+  quantity: doublePrecision("quantity").notNull(),
+  unit: varchar("unit", { length: 20 }).$type<IngredientUnit>().notNull(),
+  unitPrice: doublePrecision("unit_price").notNull().default(0),
+  receivedQty: doublePrecision("received_qty").notNull().default(0),
+});
+
+export const stockMovements = pgTable("stock_movements", {
+  id: serial().primaryKey(),
+  ingredientId: integer("ingredient_id")
+    .notNull()
+    .references(() => ingredients.id, { onDelete: "cascade" }),
+  qty: doublePrecision("qty").notNull(),
+  kind: varchar("kind", { length: 20 }).$type<StockMovementKind>().notNull(),
+  note: text("note"),
+  eventId: integer("event_id").references(() => events.id, { onDelete: "set null" }),
+  purchaseOrderId: integer("purchase_order_id").references(() => purchaseOrders.id, {
+    onDelete: "set null",
+  }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
 export const ingredientPrices = pgTable("ingredient_prices", {
