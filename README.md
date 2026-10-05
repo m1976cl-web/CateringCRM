@@ -26,7 +26,7 @@ Pensado para equipos con poco conocimiento técnico: formularios claros, textos 
 
 **Login de equipo.** La primera visita pide crear un email y contraseña. En la misma pantalla hay **Probar sin contraseña**: entra con un usuario de demostración (`demo@cateringcrm.app`) para recorrer la app online sin clave. Después, las Functions de Netlify exigen sesión. En Supabase, RLS y funciones de auth exigen la misma sesión (la anon key no alcanza para leer tablas). En modo local el login cierra la interfaz.
 
-El acceso de prueba está **activo por defecto** y se oculta solo cuando ya existe un usuario real (email distinto de `demo@cateringcrm.app`). Quien lo use ve y puede editar los mismos datos del CRM. Para apagarlo del todo: `DEMO_LOGIN=false` en Netlify, o `VITE_DEMO_LOGIN=false` en el build de Pages. En Supabase, ejecuta `007_demo_login.sql` y `008_ops_features.sql`.
+El acceso de prueba está **activo por defecto** y se oculta solo cuando ya existe un usuario real (email distinto de `demo@cateringcrm.app`). Entra a un CRM vacío: no crea clientes, recetas, eventos ni cotizaciones de ejemplo. Quien lo use ve y puede editar los mismos datos del CRM. Para apagarlo del todo: `DEMO_LOGIN=false` en Netlify, o `VITE_DEMO_LOGIN=false` en el build de Pages. En Supabase, ejecuta `007_demo_login.sql` y `008_ops_features.sql`.
 
 **Sin autenticación de clientes finales.** El login es para el equipo de catering, no para invitados.
 
