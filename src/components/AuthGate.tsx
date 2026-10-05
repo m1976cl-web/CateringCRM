@@ -1,7 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { api, type AuthUser } from "../api";
 import { setSessionToken } from "../session";
-import { seedDemoIfEmpty } from "../demoSeed";
 import { FormField } from "./FormField";
 import { normalizeRole } from "../../shared/roles";
 
@@ -128,11 +127,6 @@ export function AuthGate({ children }: { children: ReactNode }) {
     try {
       const res = await api.authDemoLogin();
       setSessionToken(res.token);
-      try {
-        await seedDemoIfEmpty();
-      } catch {
-        /* el login sigue aunque falle el ejemplo */
-      }
       setUser(withRole(res.user));
       setConfigured(true);
       setPassword("");
