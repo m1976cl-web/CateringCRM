@@ -10,10 +10,11 @@ import {
   shoppingLists,
   suppliers,
 } from "../../db/schema";
-import { applyPurchaseToStock, buildShoppingLines, quantityAfterStock } from "../../shared/shopping";
+import { applyPurchaseToStock, buildShoppingLines, quantityAfterStock, roundQty } from "../../shared/shopping";
 import type { IngredientUnit } from "../../shared/types";
 import { error, json, now, parseId, readJson } from "./_shared/http";
 import { denyIfUnauthorized } from "./_shared/auth";
+import { applyCatalogDelta } from "./_shared/stock";
 
 async function loadShoppingList(eventId: number) {
   const [list] = await db
@@ -177,20 +178,24 @@ export default async (req: Request, context: Context) => {
             .where(eq(ingredients.id, current.ingredientId))
             .limit(1);
           if (ing) {
-            await db
-              .update(ingredients)
-              .set({
-                stockQty: applyPurchaseToStock(
-                  ing.stockQty ?? 0,
-                  ing.unit,
-                  current.quantity,
-                  current.unit as IngredientUnit,
-                  current.purchased,
-                  nextPurchased,
-                ),
-                updatedAt: now(),
-              })
-              .where(eq(ingredients.id, ing.id));
+            const nextStock = applyPurchaseToStock(
+              ing.stockQty ?? 0,
+              ing.unit,
+              current.quantity,
+              current.unit as IngredientUnit,
+              current.purchased,
+              nextPurchased,
+            );
+            const delta = roundQty(nextStock - (ing.stockQty ?? 0));
+            if (delta !== 0) {
+              await applyCatalogDelta({
+                ingredientId: ing.id,
+                delta,
+                kind: delta > 0 ? "recepcion" : "ajuste",
+                note: delta > 0 ? "Marcado en la lista de compras" : "Desmarcado en la lista de compras",
+                eventId,
+              });
+            }
           }
         }
         await db
