@@ -33,6 +33,11 @@ import {
 import { isQuoteOfferOpen, resolveValidUntil } from "../shared/quoteOffer";
 import { isQuoteSuperseded } from "../shared/quoteHistory";
 import { buildReadiness } from "../shared/eventReadiness";
+import {
+  planMenuConsumption,
+  shouldConsumeMenu,
+  stockShortMessage,
+} from "../shared/eventConsumption";
 import { DEMO_USER_EMAIL, DEMO_USER_NAME, parseDemoLoginFlag } from "../shared/demoLogin";
 import {
   quoteTotal,
@@ -96,6 +101,7 @@ type Store = {
     staff: EventStaff[];
     notes: string | null;
     estimatedCost: number | null;
+    stockConsumed?: boolean;
     services: ServiceType[];
     recipes: Array<{
       id: number;
@@ -228,6 +234,7 @@ function read(): Store {
       endTime: ev.endTime ?? null,
       venueContact: ev.venueContact ?? null,
       venuePhone: ev.venuePhone ?? null,
+      stockConsumed: ev.stockConsumed ?? false,
       packingItems: parsePackingItems(ev.packingItems).length
         ? parsePackingItems(ev.packingItems)
         : defaultPackingItems(),
@@ -350,6 +357,7 @@ function eventDetail(store: Store, ev: Store["events"][number]): EventDetail {
     expenses: parseExpenses(ev.expenses),
     staff: parseStaff(ev.staff),
     notes: ev.notes,
+    stockConsumed: ev.stockConsumed ?? false,
     recipes: ev.recipes.map((r) => ({
       ...r,
       recipeName: store.recipes.find((x) => x.id === r.recipeId)?.name ?? "—",
@@ -922,6 +930,40 @@ export const local = {
     return { ok: true };
   },
 
+  consumeMenu(store: Store, eventId: number, recipes: EventInput["recipes"], allowShort: boolean) {
+    const ev = store.events.find((row) => row.id === eventId);
+    if (!ev) fail("Evento no encontrado");
+    const needs: Array<{ ingredientId: number; name: string; unit: Ingredient["unit"]; quantity: number }> = [];
+    for (const row of recipes) {
+      const recipe = store.recipes.find((item) => item.id === row.recipeId);
+      if (!recipe) continue;
+      const scale = row.portions / Math.max(recipe.yieldPortions, 1);
+      for (const ing of recipe.ingredients) {
+        const cat = store.ingredients.find((item) => item.id === ing.ingredientId);
+        if (!cat) continue;
+        const qty = convertQuantity(ing.quantity * scale, ing.unit, cat.unit);
+        if (qty == null || !(qty > 0)) continue;
+        needs.push({ ingredientId: cat.id, name: cat.name, unit: cat.unit, quantity: qty });
+      }
+    }
+    const stockById = new Map(
+      store.ingredients.map((ing) => [
+        ing.id,
+        { stockQty: ing.stockQty ?? 0, unit: ing.unit, name: ing.name },
+      ]),
+    );
+    const lines = planMenuConsumption(needs, stockById);
+    if (lines.some((line) => line.short > 0) && !allowShort) fail(stockShortMessage(lines));
+    for (const line of lines) {
+      if (line.deduct <= 0) continue;
+      applyLocalDelta(store, line.ingredientId, -line.deduct, "consumo", {
+        note: "Consumo del menú",
+        eventId,
+      });
+    }
+    ev.stockConsumed = true;
+  },
+
   listEvents() {
     const store = read();
     return store.events
@@ -962,6 +1004,9 @@ export const local = {
       updatedAt: nowIso(),
     };
     store.events.push(row);
+    if (shouldConsumeMenu("borrador", body.status, false)) {
+      local.consumeMenu(store, id, body.recipes, Boolean(body.allowShortStock));
+    }
     write(store);
     return eventDetail(store, row);
   },
@@ -969,8 +1014,9 @@ export const local = {
     const store = read();
     const idx = store.events.findIndex((e) => e.id === id);
     if (idx < 0) fail("Evento no encontrado");
+    const previous = store.events[idx];
     store.events[idx] = {
-      ...store.events[idx],
+      ...previous,
       clientId: body.clientId,
       title: body.title,
       eventDate: body.eventDate,
@@ -981,6 +1027,7 @@ export const local = {
       ...eventOpsFromBody(body),
       notes: body.notes ?? null,
       estimatedCost: body.estimatedCost ?? null,
+      stockConsumed: previous.stockConsumed ?? false,
       services: body.services,
       recipes: body.recipes.map((r, i) => ({
         id: i + 1,
@@ -990,6 +1037,9 @@ export const local = {
       })),
       updatedAt: nowIso(),
     };
+    if (shouldConsumeMenu(previous.status, body.status, previous.stockConsumed ?? false)) {
+      local.consumeMenu(store, id, body.recipes, Boolean(body.allowShortStock));
+    }
     write(store);
     return eventDetail(store, store.events[idx]);
   },

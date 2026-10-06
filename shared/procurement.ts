@@ -1,7 +1,7 @@
 import { convertQuantity, roundQty } from "./shopping";
 import type { IngredientUnit } from "./types";
 
-export const STOCK_MOVEMENT_KINDS = ["entrada", "recepcion", "merma", "reserva", "ajuste"] as const;
+export const STOCK_MOVEMENT_KINDS = ["entrada", "recepcion", "merma", "reserva", "ajuste", "consumo"] as const;
 export type StockMovementKind = (typeof STOCK_MOVEMENT_KINDS)[number];
 
 export const STOCK_KIND_LABELS: Record<StockMovementKind, string> = {
@@ -10,6 +10,7 @@ export const STOCK_KIND_LABELS: Record<StockMovementKind, string> = {
   merma: "Merma",
   reserva: "Reserva",
   ajuste: "Ajuste",
+  consumo: "Consumo del menú",
 };
 
 export const PURCHASE_ORDER_STATUSES = ["borrador", "enviada", "recibida", "cancelada"] as const;
@@ -36,7 +37,7 @@ export function movementDelta(kind: StockMovementKind, qty: number): number {
   if (kind === "ajuste") return roundQty(qty);
   const abs = roundQty(Math.abs(qty));
   if (!(abs > 0)) return 0;
-  if (kind === "merma" || kind === "reserva") return -abs;
+  if (kind === "merma" || kind === "reserva" || kind === "consumo") return -abs;
   return abs;
 }
 

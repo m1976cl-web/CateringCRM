@@ -5,7 +5,14 @@ import { clients, eventServices, events } from "../../db/schema";
 import { buildReadiness } from "../../shared/eventReadiness";
 import { error, json, now, readJson } from "./_shared/http";
 import { denyIfUnauthorized } from "./_shared/auth";
-import { eventDetail, loadReadiness, parseEventBody, saveEventRelations } from "./_shared/events";
+import {
+  applyMenuConsumption,
+  eventDetail,
+  loadReadiness,
+  parseEventBody,
+  prepareMenuConsumption,
+  saveEventRelations,
+} from "./_shared/events";
 
 export default async (req: Request, _context: Context) => {
   const denied = await denyIfUnauthorized(req);
@@ -68,6 +75,15 @@ export default async (req: Request, _context: Context) => {
   const parsed = parseEventBody(body);
   if ("error" in parsed) return error(parsed.error as string);
 
+  const consumption = await prepareMenuConsumption({
+    previousStatus: "nuevo",
+    nextStatus: parsed.status,
+    alreadyConsumed: false,
+    allowShortStock: parsed.allowShortStock,
+    recipeRows: parsed.recipeRows,
+  });
+  if (consumption.error) return error(consumption.error, 409);
+
   const [created] = await db
     .insert(events)
     .values({
@@ -89,12 +105,14 @@ export default async (req: Request, _context: Context) => {
       staff: parsed.staff,
       notes: parsed.notes,
       estimatedCost: parsed.estimatedCost,
+      stockConsumed: consumption.stockConsumed,
       createdAt: now(),
       updatedAt: now(),
     })
     .returning();
 
   await saveEventRelations(created.id, [...parsed.services], [...parsed.recipeRows]);
+  if (consumption.lines.length) await applyMenuConsumption(created.id, consumption.lines);
   return json(await eventDetail(created.id), 201);
 };
 
