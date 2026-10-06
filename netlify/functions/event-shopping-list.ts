@@ -13,7 +13,8 @@ import {
 import { applyPurchaseToStock, buildShoppingLines, quantityAfterStock, roundQty } from "../../shared/shopping";
 import type { IngredientUnit } from "../../shared/types";
 import { error, json, now, parseId, readJson } from "./_shared/http";
-import { denyIfUnauthorized } from "./_shared/auth";
+import { denyIfCannot, denyIfUnauthorized } from "./_shared/auth";
+import { canEditPrices } from "../../shared/roles";
 import { applyCatalogDelta } from "./_shared/stock";
 
 async function loadShoppingList(eventId: number) {
@@ -140,7 +141,8 @@ async function regenerate(eventId: number) {
 }
 
 export default async (req: Request, context: Context) => {
-  const denied = await denyIfUnauthorized(req);
+  const denied =
+    req.method === "GET" ? await denyIfUnauthorized(req) : await denyIfCannot(req, canEditPrices);
   if (denied) return denied;
 
   const eventId = parseId(context.params?.id);

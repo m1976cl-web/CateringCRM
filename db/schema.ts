@@ -49,6 +49,7 @@ export const ingredients = pgTable("ingredients", {
   supplierId: integer("supplier_id").references(() => suppliers.id, { onDelete: "set null" }),
   unitPrice: doublePrecision("unit_price"),
   stockQty: doublePrecision("stock_qty").notNull().default(0),
+  minStock: doublePrecision("min_stock").notNull().default(0),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -141,6 +142,7 @@ export const quotes = pgTable("quotes", {
   parentQuoteId: integer("parent_quote_id"),
   publicToken: varchar("public_token", { length: 64 }).unique(),
   dueDate: timestamp("due_date"),
+  validUntil: timestamp("valid_until"),
   lastContactedAt: timestamp("last_contacted_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -165,6 +167,8 @@ export const teamUsers = pgTable("team_users", {
   passwordSalt: varchar("password_salt", { length: 64 }).notNull(),
   passwordHash: varchar("password_hash", { length: 128 }).notNull(),
   role: varchar("role", { length: 20 }).notNull().default("admin"),
+  recoverySalt: varchar("recovery_salt", { length: 64 }),
+  recoveryHash: varchar("recovery_hash", { length: 128 }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

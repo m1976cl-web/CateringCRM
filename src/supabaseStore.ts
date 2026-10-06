@@ -38,6 +38,7 @@ import {
   parseTimeHm,
 } from "../shared/ops";
 import { normalizeRole } from "../shared/roles";
+import { resolveValidUntil } from "../shared/quoteOffer";
 import { parseDemoLoginFlag } from "../shared/demoLogin";
 import type {
   AuthUser,
@@ -87,6 +88,7 @@ type IngredientRow = {
   supplier_id: number | null;
   unit_price: number | null;
   stock_qty?: number | null;
+  min_stock?: number | null;
   created_at: string;
   updated_at: string;
 };
@@ -151,6 +153,7 @@ type QuoteRow = {
   parent_quote_id?: number | null;
   public_token?: string | null;
   due_date?: string | null;
+  valid_until?: string | null;
   last_contacted_at?: string | null;
   created_at: string;
   updated_at: string;
@@ -367,6 +370,7 @@ function mapIngredient(
     supplierId: row.supplier_id,
     unitPrice: row.unit_price,
     stockQty: row.stock_qty ?? 0,
+    minStock: row.min_stock ?? 0,
     supplierName: supplierName ?? null,
     createdAt: iso(row.created_at),
     updatedAt: iso(row.updated_at),
@@ -380,6 +384,7 @@ function quoteMeta(q: QuoteRow) {
     parentQuoteId: q.parent_quote_id ?? null,
     publicToken: q.public_token ?? null,
     dueDate: q.due_date ? iso(q.due_date) : null,
+    validUntil: q.valid_until ? iso(q.valid_until) : null,
     lastContactedAt: q.last_contacted_at ? iso(q.last_contacted_at) : null,
   };
 }
@@ -939,6 +944,7 @@ export const cloud = {
         supplier_id: body.supplierId ?? null,
         unit_price: body.unitPrice ?? null,
         stock_qty: 0,
+        min_stock: Math.max(0, body.minStock ?? 0),
       })
       .select("*")
       .single();
@@ -984,6 +990,7 @@ export const cloud = {
         supplier_id: body.supplierId ?? null,
         unit_price: nextPrice,
         stock_qty: Math.max(0, body.stockQty ?? prev.stock_qty ?? 0),
+        min_stock: Math.max(0, body.minStock ?? prev.min_stock ?? 0),
         updated_at: new Date().toISOString(),
       })
       .eq("id", id)
@@ -1490,6 +1497,7 @@ export const cloud = {
         version: 1,
         public_token: randomToken().slice(0, 32),
         due_date: body.dueDate ?? (ev as { event_date?: string }).event_date ?? null,
+        valid_until: resolveValidUntil(body.validUntil, new Date(body.quoteDate ?? Date.now())).toISOString(),
       })
       .select("*")
       .single();
@@ -1512,6 +1520,11 @@ export const cloud = {
       updated_at: new Date().toISOString(),
     };
     if (body.dueDate !== undefined) patch.due_date = body.dueDate;
+    if (body.validUntil !== undefined) {
+      patch.valid_until = body.validUntil
+        ? resolveValidUntil(body.validUntil, new Date(body.quoteDate ?? Date.now())).toISOString()
+        : null;
+    }
     if (body.lastContactedAt !== undefined) patch.last_contacted_at = body.lastContactedAt;
     const { data, error } = await getSupabase()
       .from("quotes")
@@ -1557,6 +1570,7 @@ export const cloud = {
         parent_quote_id: source.id,
         public_token: randomToken().slice(0, 32),
         due_date: source.dueDate,
+        valid_until: resolveValidUntil(null, new Date()).toISOString(),
       })
       .select("*")
       .single();
@@ -1674,12 +1688,12 @@ export const cloud = {
     const { salt } = await rpcJson<{ salt: string }>("crm_auth_password_salt");
     const current = await hashPassword(body.currentPassword, salt);
     const next = await hashPassword(body.password);
-    await rpcJson<{ ok: boolean }>("crm_auth_change_password", {
+    const changed = await rpcJson<{ ok?: boolean; token: string }>("crm_auth_change_password", {
       p_current_hash: current.hash,
       p_new_salt: next.salt,
       p_new_hash: next.hash,
     });
-    return { ok: true };
+    return { ok: true, token: changed.token };
   },
 
   async authDeleteUser(id: number) {
@@ -1711,7 +1725,7 @@ export const cloud = {
   async authRecover(body: { email: string; code: string; password: string }) {
     const email = body.email.trim().toLowerCase();
     if (body.password.length < 8) fail("La contraseña debe tener al menos 8 caracteres");
-    const { salt } = await rpcJson<{ salt: string }>("crm_auth_recovery_salt");
+    const { salt } = await rpcJson<{ salt: string }>("crm_auth_recovery_salt", { p_email: email });
     const codeHash = await hashPassword(normalizeRecoveryCode(body.code), salt);
     const hashed = await hashPassword(body.password);
     const res = await rpcJson<AuthRpcSession>("crm_auth_recover", {

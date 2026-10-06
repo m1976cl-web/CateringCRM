@@ -5,11 +5,17 @@ import { ingredientPrices, ingredients } from "../../db/schema";
 import { isIngredientUnit } from "../../shared/types";
 import { roundQty } from "../../shared/shopping";
 import { asNumber, error, json, now, parseId, readJson } from "./_shared/http";
-import { denyIfUnauthorized } from "./_shared/auth";
+import { denyIfCannot, denyIfUnauthorized } from "./_shared/auth";
+import { canDeleteCatalog, canEditPrices } from "../../shared/roles";
 import { logMovement } from "./_shared/stock";
 
 export default async (req: Request, context: Context) => {
-  const denied = await denyIfUnauthorized(req);
+  const denied =
+    req.method === "GET"
+      ? await denyIfUnauthorized(req)
+      : req.method === "DELETE"
+        ? await denyIfCannot(req, canDeleteCatalog)
+        : await denyIfCannot(req, canEditPrices);
   if (denied) return denied;
 
   const id = parseId(context.params?.id);
@@ -60,6 +66,7 @@ export default async (req: Request, context: Context) => {
         supplierId,
         unitPrice: nextPrice,
         stockQty: desiredStock,
+        minStock: Math.max(0, asNumber(body.minStock, current.minStock ?? 0)),
         updatedAt: now(),
       })
       .where(eq(ingredients.id, id))

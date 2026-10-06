@@ -43,6 +43,7 @@ export type Ingredient = {
   supplierId: number | null;
   unitPrice: number | null;
   stockQty: number;
+  minStock: number;
   supplierName?: string | null;
   createdAt: string;
   updatedAt: string;
@@ -153,6 +154,7 @@ export type QuoteSummary = {
   parentQuoteId: number | null;
   publicToken: string | null;
   dueDate: string | null;
+  validUntil: string | null;
   lastContactedAt: string | null;
 };
 
@@ -478,7 +480,7 @@ const remote = {
       body: JSON.stringify(body),
     }),
   authChangePassword: (body: { currentPassword: string; password: string }) =>
-    request<{ ok: boolean }>("/api/auth?action=password", {
+    request<{ ok: boolean; token: string }>("/api/auth?action=password", {
       method: "PUT",
       body: JSON.stringify(body),
     }),
@@ -594,7 +596,7 @@ export const api = {
   listPurchaseOrders: route(
     cloud.listPurchaseOrders,
     remote.listPurchaseOrders,
-    (eventId) => local.listPurchaseOrders(eventId),
+    (eventId?: number) => local.listPurchaseOrders(eventId),
   ),
   createPurchaseOrders: route(
     cloud.createPurchaseOrders,

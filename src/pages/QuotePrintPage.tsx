@@ -4,6 +4,7 @@ import { api, formatDate, formatMoney, type QuoteDetail } from "../api";
 import { loadCompanySettings } from "../settings";
 import { quoteMoney } from "../quoteDisplay";
 import { PAYMENT_METHOD_LABELS, QUOTE_STATUS_LABELS } from "../../shared/types";
+import { calendarDay } from "../../shared/quoteOffer";
 
 export function QuotePrintPage() {
   const { id } = useParams();
@@ -29,8 +30,13 @@ export function QuotePrintPage() {
   if (error) return <div className="error-box" style={{ margin: 24 }}>{error}</div>;
   if (!quote) return <div className="loading">Cargando cotización…</div>;
 
-  const validUntil = new Date(quote.quoteDate);
-  validUntil.setDate(validUntil.getDate() + (settings.quoteValidityDays || 15));
+  const validUntil = quote.validUntil
+    ? new Date(`${calendarDay(quote.validUntil)}T12:00:00`)
+    : (() => {
+        const fallback = new Date(quote.quoteDate);
+        fallback.setDate(fallback.getDate() + (settings.quoteValidityDays || 15));
+        return fallback;
+      })();
   const tax = quoteMoney(quote, settings);
 
   return (

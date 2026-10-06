@@ -3,10 +3,12 @@ import { asc } from "drizzle-orm";
 import { db } from "../../db";
 import { clients } from "../../db/schema";
 import { asOptionalString, error, json, now, readJson } from "./_shared/http";
-import { denyIfUnauthorized } from "./_shared/auth";
+import { denyIfCannot, denyIfUnauthorized } from "./_shared/auth";
+import { canEditClients } from "../../shared/roles";
 
 export default async (req: Request, _context: Context) => {
-  const denied = await denyIfUnauthorized(req);
+  const denied =
+    req.method === "GET" ? await denyIfUnauthorized(req) : await denyIfCannot(req, canEditClients);
   if (denied) return denied;
 
   if (req.method === "GET") {

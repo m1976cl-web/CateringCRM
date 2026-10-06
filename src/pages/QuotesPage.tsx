@@ -25,6 +25,7 @@ import { whatsappPhoneUrl, whatsappTextUrl } from "../whatsapp";
 import { publicQuoteUrl } from "../publicQuote";
 import { useAuth } from "../components/AuthGate";
 import { canEditQuotes } from "../../shared/roles";
+import { addCalendarDays, calendarDay } from "../../shared/quoteOffer";
 import {
   PAYMENT_METHODS,
   PAYMENT_METHOD_LABELS,
@@ -105,6 +106,9 @@ export function QuotesPage() {
   const [prefillDone, setPrefillDone] = useState(false);
   const [query, setQuery] = useState("");
   const [dueDate, setDueDate] = useState("");
+  const [validUntil, setValidUntil] = useState(() =>
+    addCalendarDays(new Date(), loadCompanySettings().quoteValidityDays || 15),
+  );
   const [linkMsg, setLinkMsg] = useState("");
   const settings = loadCompanySettings();
 
@@ -167,6 +171,7 @@ export function QuotesPage() {
     setFoodCost(0);
     setItems([blankItem()]);
     setDueDate("");
+    setValidUntil(addCalendarDays(new Date(), settings.quoteValidityDays || 15));
   }
 
   function startEdit(q: QuoteSummary) {
@@ -180,6 +185,11 @@ export function QuotesPage() {
     setFoodCost(q.foodCost ?? 0);
     setItems(q.items.length ? q.items : [blankItem()]);
     setDueDate(q.dueDate ? toDatetimeLocal(q.dueDate) : "");
+    setValidUntil(
+      q.validUntil
+        ? calendarDay(q.validUntil)
+        : addCalendarDays(q.quoteDate, settings.quoteValidityDays || 15),
+    );
   }
 
   async function createVersion(q: QuoteSummary) {
@@ -219,6 +229,7 @@ export function QuotesPage() {
     setFoodCost(q.foodCost ?? 0);
     setItems(q.items.length ? q.items.map((i) => ({ ...i })) : [blankItem()]);
     setDueDate(q.dueDate ? toDatetimeLocal(q.dueDate) : "");
+    setValidUntil(addCalendarDays(new Date(), settings.quoteValidityDays || 15));
   }
 
   async function fillFromEventId(id: number) {
@@ -295,6 +306,7 @@ export function QuotesPage() {
         foodCost,
         payments,
         dueDate: dueDate ? new Date(dueDate).toISOString() : null,
+        validUntil,
       };
       if (editingId) await api.updateQuote(editingId, payload);
       else await api.createQuote(payload);
@@ -399,9 +411,17 @@ export function QuotesPage() {
               </select>
             </FormField>
           </div>
+          <div className="grid-2">
           <FormField label="Vencimiento / cobro" hint="Fecha para la cola de cobranza. Por defecto, el día del evento.">
             <input type="datetime-local" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
           </FormField>
+          <FormField
+            label="Válida hasta"
+            hint="Después de este día el cliente sigue viendo el enlace, pero ya no puede aceptar ni rechazar."
+          >
+            <input type="date" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} required />
+          </FormField>
+          </div>
 
           <div>
             <div className="page-header" style={{ marginBottom: 8 }}>
@@ -624,6 +644,7 @@ export function QuotesPage() {
                     <div className="meta">
                       {q.clientName} · {q.eventTitle} · {formatDate(q.quoteDate)}
                       {q.dueDate ? ` · cobro ${formatDateOnly(q.dueDate)}` : ""}
+                      {q.validUntil ? ` · válida hasta ${formatDateOnly(`${calendarDay(q.validUntil)}T12:00:00`)}` : ""}
                       {rowMoney.addIva ? ` · IVA ${rowMoney.ivaRate}% incluido` : ""}
                       {rowMoney.foodCost > 0
                         ? ` · margen ${formatMoney(rowMoney.margin)}${rowMoney.marginPct != null ? ` (${rowMoney.marginPct}%)` : ""}`
