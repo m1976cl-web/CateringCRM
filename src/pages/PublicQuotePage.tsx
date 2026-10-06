@@ -67,6 +67,9 @@ export function PublicQuotePage() {
 
   const decided = quote.status === "aceptada" || quote.status === "rechazada";
   const offerOpen = isQuoteOfferOpen(quote.validUntil);
+  const superseded = Boolean(quote.superseded);
+  const history = quote.history ?? [];
+  const canAnswer = !decided && offerOpen && !superseded;
   const validLabel = quote.validUntil
     ? new Date(`${calendarDay(quote.validUntil)}T12:00:00`).toLocaleDateString("es-CL")
     : null;
@@ -79,7 +82,14 @@ export function PublicQuotePage() {
           <h1 style={{ margin: "4px 0 0", fontFamily: "Fraunces, Georgia, serif" }}>
             Cotización {quote.quoteNumber || `#${quote.id}`}
           </h1>
-          {quote.version > 1 ? <p className="meta">Versión {quote.version}</p> : null}
+          {history.length > 1 ? (
+            <p className="meta">
+              Versión {quote.version} de {history.length}
+              {superseded ? " · reemplazada" : ""}
+            </p>
+          ) : quote.version > 1 ? (
+            <p className="meta">Versión {quote.version}</p>
+          ) : null}
         </div>
         <div style={{ textAlign: "right" }}>
           <div>{QUOTE_STATUS_LABELS[quote.status]}</div>
@@ -134,6 +144,24 @@ export function PublicQuotePage() {
         <strong>Total {formatMoney(tax.total)}</strong>
       </p>
 
+      {history.length > 1 ? (
+        <section className="panel" style={{ marginTop: 16 }}>
+          <h3 style={{ marginTop: 0 }}>Versiones de esta cotización</h3>
+          <ul className="meta" style={{ marginBottom: 0 }}>
+            {history.map((revision) => {
+              const revisionTotal = quoteTaxBreakdown(revision.total, settings).total;
+              return (
+                <li key={revision.version}>
+                  Versión {revision.version} · {formatDate(revision.quoteDate)} · {formatMoney(revisionTotal)} ·{" "}
+                  {QUOTE_STATUS_LABELS[revision.status]}
+                  {revision.version === quote.version ? " · esta" : ""}
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ) : null}
+
       {quote.notes ? (
         <section style={{ marginTop: 16 }}>
           <h3>Notas</h3>
@@ -141,7 +169,7 @@ export function PublicQuotePage() {
         </section>
       ) : null}
 
-      {!decided && offerOpen ? (
+      {canAnswer ? (
         <div className="form-actions" style={{ marginTop: 24 }}>
           <button
             type="button"
@@ -159,7 +187,9 @@ export function PublicQuotePage() {
         <p className="meta" style={{ marginTop: 24 }}>
           {decided
             ? `Esta cotización ya fue ${quote.status === "aceptada" ? "aceptada" : "rechazada"}.`
-            : "Esta cotización ya no está vigente. Pide una versión nueva."}
+            : superseded
+              ? "Esta versión fue reemplazada. Pide el enlace de la más nueva."
+              : "Esta cotización ya no está vigente. Pide una versión nueva."}
         </p>
       )}
     </div>

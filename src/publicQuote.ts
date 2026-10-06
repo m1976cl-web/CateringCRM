@@ -1,3 +1,4 @@
+import type { PublicQuoteRevision } from "../shared/quoteHistory";
 import type { QuoteItem, QuoteStatus } from "../shared/types";
 
 export type PublicQuoteView = {
@@ -10,6 +11,8 @@ export type PublicQuoteView = {
   status: QuoteStatus;
   version: number;
   validUntil?: string | null;
+  superseded?: boolean;
+  history?: PublicQuoteRevision[];
   eventTitle: string;
   eventDate: string;
   location: string | null;

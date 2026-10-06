@@ -640,6 +640,9 @@ export function QuotesPage() {
                     <h3>
                       {q.quoteNumber || `Cotización #${q.id}`} — {formatMoney(rowMoney.total)}
                       {q.version > 1 ? ` · v${q.version}` : ""}
+                      {quotes.some((other) => other.eventId === q.eventId && other.version > q.version)
+                        ? " · reemplazada"
+                        : ""}
                     </h3>
                     <div className="meta">
                       {q.clientName} · {q.eventTitle} · {formatDate(q.quoteDate)}
