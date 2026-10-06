@@ -112,6 +112,7 @@ export type EventSummary = {
 };
 
 export type EventDetail = EventSummary & {
+  stockConsumed: boolean;
   dietaryRestrictions: string | null;
   dietaryTags: DietaryTag[];
   setupTime: string | null;

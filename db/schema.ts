@@ -101,6 +101,7 @@ export const events = pgTable("events", {
   staff: jsonb("staff").$type<unknown[]>().notNull().default([]),
   notes: text("notes"),
   estimatedCost: doublePrecision("estimated_cost"),
+  stockConsumed: boolean("stock_consumed").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

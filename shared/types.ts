@@ -146,6 +146,8 @@ export type EventInput = {
   staff?: EventStaff[];
   services: ServiceType[];
   recipes: EventRecipeInput[];
+  /** Si es true, al pasar a realizado se descuenta solo el stock disponible. */
+  allowShortStock?: boolean;
 };
 
 export type QuoteInput = {

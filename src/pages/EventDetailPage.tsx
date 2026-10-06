@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   api,
+  formatDate,
   formatMoney,
   toDatetimeLocal,
   type Client,
@@ -18,6 +19,8 @@ import { recipeFitsService } from "../../shared/recipeMeta";
 import { estimateFoodCost } from "../../shared/shopping";
 import { buildEventOperatingResult, isOpenPurchaseStatus } from "../../shared/procurement";
 import { shoppingStatusLabel, type ShoppingReadiness } from "../../shared/eventReadiness";
+import { eventReadyText, STOCK_SHORT_PREFIX } from "../../shared/eventConsumption";
+import { whatsappPhoneUrl, whatsappTextUrl } from "../whatsapp";
 import {
   REPEAT_INTERVALS,
   REPEAT_INTERVAL_LABELS,
@@ -108,6 +111,9 @@ export function EventDetailPage() {
   const [repeatExtra, setRepeatExtra] = useState(3);
   const [eventQuotes, setEventQuotes] = useState<QuoteSummary[]>([]);
   const [shoppingState, setShoppingState] = useState<ShoppingReadiness>("none");
+  const [stockConsumed, setStockConsumed] = useState(false);
+  const [askShort, setAskShort] = useState(false);
+  const [shortMessage, setShortMessage] = useState("");
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
 
   const fechaParam = searchParams.get("fecha");
@@ -205,6 +211,7 @@ export function EventDetailPage() {
             })),
           );
           setShoppingState(ev.readiness.shopping);
+          setStockConsumed(ev.stockConsumed);
         }
       } catch (e) {
         if (alive) setError(e instanceof Error ? e.message : "No se pudo cargar");
@@ -315,6 +322,19 @@ export function EventDetailPage() {
     return [...eventQuotes].sort((a, b) => b.version - a.version || b.id - a.id)[0];
   }, [eventQuotes]);
   const latestQuoteMoney = latestQuote ? quoteMoney(latestQuote) : null;
+  const readyClient = clients.find((client) => client.id === Number(clientId));
+  const readyText = eventReadyText({
+    title: title.trim() || "Evento",
+    when: eventDate ? formatDate(eventDate) : "fecha por confirmar",
+    location: location || null,
+    balanceLabel:
+      quoteMoneyTotals.billed > 0
+        ? quoteMoneyTotals.balance > 0
+          ? `Saldo pendiente: ${formatMoney(quoteMoneyTotals.balance)}`
+          : "Saldo: pagado"
+        : null,
+  });
+  const readyHref = whatsappPhoneUrl(readyClient?.phone ?? "", readyText) ?? whatsappTextUrl(readyText);
 
   const menuByService = useMemo(() => {
     const map = new Map<ServiceType, MenuRow[]>();
@@ -377,7 +397,10 @@ export function EventDetailPage() {
     return extra;
   }
 
-  async function persistEvent(action: "save" | "shopping" | "series", skipWarn = false) {
+  async function persistEvent(
+    action: "save" | "shopping" | "series",
+    opts?: { skipUnpaid?: boolean; allowShort?: boolean },
+  ) {
     if (action === "shopping") {
       if (services.length === 0) {
         setError("Elige al menos un servicio (desayuno, almuerzo…)");
@@ -394,15 +417,16 @@ export function EventDetailPage() {
         return;
       }
     }
-    if (!skipWarn && needsUnpaidWarning()) {
+    if (!opts?.skipUnpaid && needsUnpaidWarning()) {
       setPendingAction(action);
       setAskUnpaid(true);
       return;
     }
     setSaving(true);
     setError("");
+    let openedShort = false;
     try {
-      const payload = buildPayload();
+      const payload = { ...buildPayload(), allowShortStock: Boolean(opts?.allowShort) };
       if (isNew) {
         const created = await api.createEvent(payload);
         const extra = action === "shopping" ? 0 : await createSeriesCopies(payload);
@@ -415,8 +439,10 @@ export function EventDetailPage() {
         return;
       }
       if (!eventId) throw new Error("No se pudo guardar el evento");
-      await api.updateEvent(eventId, payload);
-      setSavedStatus(payload.status);
+      const saved = await api.updateEvent(eventId, payload);
+      setSavedStatus(saved.status);
+      setStockConsumed(saved.stockConsumed);
+      setShoppingState(saved.readiness.shopping);
       if (action === "series") {
         const extra = await createSeriesCopies(payload);
         navigate(extra > 0 ? "/eventos" : `/eventos/${eventId}`);
@@ -429,11 +455,19 @@ export function EventDetailPage() {
       }
       navigate(`/eventos/${eventId}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "No se pudo guardar");
+      const message = err instanceof Error ? err.message : "No se pudo guardar";
+      if (message.startsWith(STOCK_SHORT_PREFIX)) {
+        setShortMessage(message);
+        setPendingAction(action);
+        setAskShort(true);
+        openedShort = true;
+        return;
+      }
+      setError(message);
     } finally {
       setSaving(false);
       setAskUnpaid(false);
-      setPendingAction(null);
+      if (!openedShort) setPendingAction(null);
     }
   }
 
@@ -624,6 +658,29 @@ export function EventDetailPage() {
               ) : (
                 <span className="badge tone-neutral">—</span>
               )}
+            </li>
+            <li>
+              <span>
+                <strong>Stock del menú</strong>
+                <span className="meta">
+                  {" "}
+                  {stockConsumed
+                    ? "Ya se descontó al marcar realizado"
+                    : "Se descuenta una sola vez al pasar a realizado"}
+                </span>
+              </span>
+              <span className={`badge ${stockConsumed ? "tone-good" : "tone-neutral"}`}>
+                {stockConsumed ? "Descontado" : "Pendiente"}
+              </span>
+            </li>
+            <li>
+              <span>
+                <strong>Aviso al cliente</strong>
+                <span className="meta"> Fecha, lugar y saldo</span>
+              </span>
+              <a className="btn" href={readyHref} target="_blank" rel="noreferrer">
+                WhatsApp
+              </a>
             </li>
           </ul>
         </section>
@@ -1321,7 +1378,23 @@ export function EventDetailPage() {
         }}
         onConfirm={() => {
           const action = pendingAction ?? "save";
-          void persistEvent(action, true);
+          void persistEvent(action, { skipUnpaid: true });
+        }}
+      />
+      <ConfirmDialog
+        open={askShort}
+        title="No alcanza el stock"
+        message={`${shortMessage} Puedes marcar el evento realizado y descontar solo lo que hay en bodega.`}
+        confirmLabel="Descontar lo disponible"
+        danger={false}
+        onCancel={() => {
+          setAskShort(false);
+          setPendingAction(null);
+        }}
+        onConfirm={() => {
+          const action = pendingAction ?? "save";
+          setAskShort(false);
+          void persistEvent(action, { skipUnpaid: true, allowShort: true });
         }}
       />
     </div>

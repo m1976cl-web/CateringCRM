@@ -4,7 +4,13 @@ import { db } from "../../db";
 import { events } from "../../db/schema";
 import { error, json, now, parseId, readJson } from "./_shared/http";
 import { denyIfUnauthorized } from "./_shared/auth";
-import { eventDetail, parseEventBody, saveEventRelations } from "./_shared/events";
+import {
+  applyMenuConsumption,
+  eventDetail,
+  parseEventBody,
+  prepareMenuConsumption,
+  saveEventRelations,
+} from "./_shared/events";
 
 export default async (req: Request, context: Context) => {
   const denied = await denyIfUnauthorized(req);
@@ -23,6 +29,23 @@ export default async (req: Request, context: Context) => {
     const body = await readJson(req);
     const parsed = parseEventBody(body);
     if ("error" in parsed) return error(parsed.error as string);
+
+    const [current] = await db
+      .select({ status: events.status, stockConsumed: events.stockConsumed })
+      .from(events)
+      .where(eq(events.id, id))
+      .limit(1);
+    if (!current) return error("Evento no encontrado", 404);
+
+    const consumption = await prepareMenuConsumption({
+      previousStatus: current.status,
+      nextStatus: parsed.status,
+      alreadyConsumed: current.stockConsumed,
+      allowShortStock: parsed.allowShortStock,
+      recipeRows: parsed.recipeRows,
+    });
+    if (consumption.error) return error(consumption.error, 409);
+    if (consumption.lines.length) await applyMenuConsumption(id, consumption.lines);
 
     const [updated] = await db
       .update(events)
@@ -45,6 +68,7 @@ export default async (req: Request, context: Context) => {
         staff: parsed.staff,
         notes: parsed.notes,
         estimatedCost: parsed.estimatedCost,
+        stockConsumed: consumption.stockConsumed,
         updatedAt: now(),
       })
       .where(eq(events.id, id))

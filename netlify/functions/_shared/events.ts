@@ -5,11 +5,22 @@ import {
   eventRecipes,
   eventServices,
   events,
+  ingredients,
+  recipeIngredients,
   recipes,
   shoppingListItems,
   shoppingLists,
 } from "../../../db/schema";
 import { buildReadiness, type EventReadiness } from "../../../shared/eventReadiness";
+import {
+  planMenuConsumption,
+  shouldConsumeMenu,
+  stockShortMessage,
+  type ConsumptionLine,
+} from "../../../shared/eventConsumption";
+import { roundQty } from "../../../shared/shopping";
+import type { EventStatus } from "../../../shared/types";
+import { applyCatalogDelta } from "./stock";
 import { isEventStatus, isServiceType, type ServiceType } from "../../../shared/types";
 import {
   defaultPackingItems,
@@ -43,6 +54,7 @@ export async function eventDetail(eventId: number) {
       staff: events.staff,
       notes: events.notes,
       estimatedCost: events.estimatedCost,
+      stockConsumed: events.stockConsumed,
       createdAt: events.createdAt,
       updatedAt: events.updatedAt,
       clientName: clients.name,
@@ -171,6 +183,89 @@ export async function saveEventRelations(
   }
 }
 
+export async function menuConsumptionLines(
+  recipeRows: Array<{ recipeId: number; portions: number }>,
+): Promise<ConsumptionLine[]> {
+  if (!recipeRows.length) return [];
+  const ids = [...new Set(recipeRows.map((row) => row.recipeId))];
+  const recipeRowsDb = await db
+    .select({ id: recipes.id, yieldPortions: recipes.yieldPortions })
+    .from(recipes)
+    .where(inArray(recipes.id, ids));
+  const links = await db
+    .select({
+      recipeId: recipeIngredients.recipeId,
+      ingredientId: recipeIngredients.ingredientId,
+      quantity: recipeIngredients.quantity,
+    })
+    .from(recipeIngredients)
+    .where(inArray(recipeIngredients.recipeId, ids));
+  const ingredientIds = [...new Set(links.map((link) => link.ingredientId))];
+  const cats = ingredientIds.length
+    ? await db
+        .select({
+          id: ingredients.id,
+          name: ingredients.name,
+          unit: ingredients.unit,
+          stockQty: ingredients.stockQty,
+        })
+        .from(ingredients)
+        .where(inArray(ingredients.id, ingredientIds))
+    : [];
+  const needs: Array<{ ingredientId: number; name: string; unit: (typeof cats)[number]["unit"]; quantity: number }> = [];
+  for (const row of recipeRows) {
+    const recipe = recipeRowsDb.find((item) => item.id === row.recipeId);
+    const scale = row.portions / Math.max(recipe?.yieldPortions ?? 1, 1);
+    for (const link of links.filter((item) => item.recipeId === row.recipeId)) {
+      const cat = cats.find((item) => item.id === link.ingredientId);
+      if (!cat) continue;
+      needs.push({
+        ingredientId: cat.id,
+        name: cat.name,
+        unit: cat.unit,
+        quantity: roundQty(link.quantity * scale),
+      });
+    }
+  }
+  return planMenuConsumption(
+    needs,
+    new Map(cats.map((cat) => [cat.id, { stockQty: cat.stockQty ?? 0, unit: cat.unit, name: cat.name }])),
+  );
+}
+
+export async function applyMenuConsumption(eventId: number, lines: ConsumptionLine[]): Promise<void> {
+  for (const line of lines) {
+    if (line.deduct <= 0) continue;
+    await applyCatalogDelta({
+      ingredientId: line.ingredientId,
+      delta: -line.deduct,
+      kind: "consumo",
+      note: "Consumo del menú",
+      eventId,
+    });
+  }
+}
+
+export async function prepareMenuConsumption(input: {
+  previousStatus: EventStatus | "nuevo";
+  nextStatus: EventStatus;
+  alreadyConsumed: boolean;
+  allowShortStock: boolean;
+  recipeRows: Array<{ recipeId: number; portions: number }>;
+}): Promise<{ stockConsumed: boolean; lines: ConsumptionLine[]; error?: string }> {
+  const entering = shouldConsumeMenu(
+    input.previousStatus === "nuevo" ? "borrador" : input.previousStatus,
+    input.nextStatus,
+    input.alreadyConsumed,
+  );
+  if (!entering) return { stockConsumed: input.alreadyConsumed, lines: [] };
+  const lines = await menuConsumptionLines(input.recipeRows);
+  if (lines.some((line) => line.short > 0) && !input.allowShortStock) {
+    return { stockConsumed: false, lines, error: stockShortMessage(lines) };
+  }
+  return { stockConsumed: true, lines };
+}
+
 export function parseEventBody(body: Record<string, unknown>) {
   const title = String(body.title ?? "").trim();
   const clientId = asNumber(body.clientId, 0);
@@ -223,6 +318,7 @@ export function parseEventBody(body: Record<string, unknown>) {
     expenses: parseExpenses(body.expenses),
     staff: parseStaff(body.staff),
     notes: asOptionalString(body.notes),
+    allowShortStock: body.allowShortStock === true,
     estimatedCost:
       body.estimatedCost === null || body.estimatedCost === undefined || body.estimatedCost === ""
         ? null

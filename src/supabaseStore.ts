@@ -41,6 +41,11 @@ import { normalizeRole } from "../shared/roles";
 import { resolveValidUntil } from "../shared/quoteOffer";
 import { parseDemoLoginFlag } from "../shared/demoLogin";
 import { buildReadiness, type EventReadiness } from "../shared/eventReadiness";
+import {
+  planMenuConsumption,
+  shouldConsumeMenu,
+  stockShortMessage,
+} from "../shared/eventConsumption";
 import type {
   AuthUser,
   Client,
@@ -135,6 +140,7 @@ type EventRow = {
   staff?: unknown;
   notes: string | null;
   estimated_cost: number | null;
+  stock_consumed?: boolean | null;
   created_at: string;
   updated_at: string;
 };
@@ -232,6 +238,68 @@ async function applyCloudDelta(
   });
   if (movErr) throw new Error(movErr.message);
   return applied;
+}
+
+async function cloudMenuPlan(
+  recipes: EventInput["recipes"],
+  allowShort: boolean,
+): Promise<ReturnType<typeof planMenuConsumption>> {
+  const db = getSupabase();
+  const recipeIds = [...new Set(recipes.map((row) => row.recipeId))];
+  if (!recipeIds.length) return [];
+  const { data: recipeRows, error: recipeErr } = await db
+    .from("recipes")
+    .select("id, yield_portions")
+    .in("id", recipeIds);
+  if (recipeErr) throw new Error(recipeErr.message);
+  const { data: links, error: linkErr } = await db
+    .from("recipe_ingredients")
+    .select("recipe_id, ingredient_id, quantity")
+    .in("recipe_id", recipeIds);
+  if (linkErr) throw new Error(linkErr.message);
+  const linkRows = (links as Array<{ recipe_id: number; ingredient_id: number; quantity: number }> | null) ?? [];
+  const ingredientIds = [...new Set(linkRows.map((link) => link.ingredient_id))];
+  const { data: cats, error: catErr } = ingredientIds.length
+    ? await db.from("ingredients").select("id, name, unit, stock_qty").in("id", ingredientIds)
+    : { data: [] as Array<{ id: number; name: string; unit: IngredientUnit; stock_qty: number | null }>, error: null };
+  if (catErr) throw new Error(catErr.message);
+  const catalog = (cats as Array<{ id: number; name: string; unit: IngredientUnit; stock_qty: number | null }> | null) ?? [];
+  const yields = new Map(
+    ((recipeRows as Array<{ id: number; yield_portions: number }> | null) ?? []).map((row) => [
+      row.id,
+      row.yield_portions,
+    ]),
+  );
+  const needs: Array<{ ingredientId: number; name: string; unit: IngredientUnit; quantity: number }> = [];
+  for (const row of recipes) {
+    const scale = row.portions / Math.max(yields.get(row.recipeId) ?? 1, 1);
+    for (const link of linkRows.filter((item) => item.recipe_id === row.recipeId)) {
+      const cat = catalog.find((item) => item.id === link.ingredient_id);
+      if (!cat) continue;
+      needs.push({
+        ingredientId: cat.id,
+        name: cat.name,
+        unit: cat.unit,
+        quantity: roundQty(link.quantity * scale),
+      });
+    }
+  }
+  const lines = planMenuConsumption(
+    needs,
+    new Map(catalog.map((cat) => [cat.id, { stockQty: cat.stock_qty ?? 0, unit: cat.unit, name: cat.name }])),
+  );
+  if (lines.some((line) => line.short > 0) && !allowShort) fail(stockShortMessage(lines));
+  return lines;
+}
+
+async function applyCloudMenu(eventId: number, lines: ReturnType<typeof planMenuConsumption>): Promise<void> {
+  for (const line of lines) {
+    if (line.deduct <= 0) continue;
+    await applyCloudDelta(line.ingredientId, -line.deduct, "consumo", {
+      note: "Consumo del menú",
+      eventId,
+    });
+  }
 }
 
 async function logCloudMovement(
@@ -526,6 +594,7 @@ async function loadEventDetail(id: number): Promise<EventDetail> {
     expenses: parseExpenses(ev.expenses),
     staff: parseStaff(ev.staff),
     notes: ev.notes,
+    stockConsumed: Boolean(ev.stock_consumed),
     recipes: ((recipes as Array<{
       id: number;
       recipe_id: number;
@@ -1207,6 +1276,8 @@ export const cloud = {
       .eq("id", body.clientId)
       .maybeSingle();
     if (!client) fail("Debes elegir un cliente");
+    const entering = shouldConsumeMenu("borrador", body.status, false);
+    const lines = entering ? await cloudMenuPlan(body.recipes, Boolean(body.allowShortStock)) : [];
 
     const { data, error } = await db
       .from("events")
@@ -1231,16 +1302,32 @@ export const cloud = {
         staff: parseStaff(body.staff),
         notes: body.notes ?? null,
         estimated_cost: body.estimatedCost ?? null,
+        stock_consumed: entering,
       })
       .select("*")
       .single();
     const row = assertOk(data as EventRow | null, error, "No se pudo crear el evento");
     await replaceEventChildren(row.id, body.services, body.recipes);
+    if (entering) await applyCloudMenu(row.id, lines);
     return loadEventDetail(row.id);
   },
 
   async updateEvent(id: number, body: EventInput): Promise<EventDetail> {
-    const { data, error } = await getSupabase()
+    const db = getSupabase();
+    const { data: current, error: currentErr } = await db
+      .from("events")
+      .select("status, stock_consumed")
+      .eq("id", id)
+      .maybeSingle();
+    const previous = assertOk(
+      current as { status: EventStatus; stock_consumed: boolean | null } | null,
+      currentErr,
+      "Evento no encontrado",
+    );
+    const entering = shouldConsumeMenu(previous.status, body.status, Boolean(previous.stock_consumed));
+    const lines = entering ? await cloudMenuPlan(body.recipes, Boolean(body.allowShortStock)) : [];
+    if (entering) await applyCloudMenu(id, lines);
+    const { data, error } = await db
       .from("events")
       .update({
         client_id: body.clientId,
@@ -1263,6 +1350,7 @@ export const cloud = {
         staff: parseStaff(body.staff),
         notes: body.notes ?? null,
         estimated_cost: body.estimatedCost ?? null,
+        stock_consumed: entering ? true : Boolean(previous.stock_consumed),
         updated_at: new Date().toISOString(),
       })
       .eq("id", id)
