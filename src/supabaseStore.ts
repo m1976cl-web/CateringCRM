@@ -40,6 +40,7 @@ import {
 import { normalizeRole } from "../shared/roles";
 import { resolveValidUntil } from "../shared/quoteOffer";
 import { parseDemoLoginFlag } from "../shared/demoLogin";
+import { buildReadiness, type EventReadiness } from "../shared/eventReadiness";
 import type {
   AuthUser,
   Client,
@@ -431,6 +432,49 @@ async function loadRecipe(id: number): Promise<Recipe> {
   };
 }
 
+async function readinessMap(rows: EventRow[]): Promise<Map<number, EventReadiness>> {
+  const map = new Map<number, EventReadiness>();
+  if (!rows.length) return map;
+  const db = getSupabase();
+  const ids = rows.map((row) => row.id);
+  const [{ data: recipes }, { data: lists }] = await Promise.all([
+    db.from("event_recipes").select("event_id").in("event_id", ids),
+    db.from("shopping_lists").select("id, event_id").in("event_id", ids),
+  ]);
+  const recipeCount = new Map<number, number>();
+  for (const row of (recipes as Array<{ event_id: number }> | null) ?? []) {
+    recipeCount.set(row.event_id, (recipeCount.get(row.event_id) ?? 0) + 1);
+  }
+  const listRows = (lists as Array<{ id: number; event_id: number }> | null) ?? [];
+  const listByEvent = new Map(listRows.map((row) => [row.event_id, row.id]));
+  const listIds = listRows.map((row) => row.id);
+  const { data: items } = listIds.length
+    ? await db.from("shopping_list_items").select("shopping_list_id, purchased").in("shopping_list_id", listIds)
+    : { data: [] as Array<{ shopping_list_id: number; purchased: boolean }> };
+  const itemStats = new Map<number, { total: number; purchased: number }>();
+  for (const item of (items as Array<{ shopping_list_id: number; purchased: boolean }> | null) ?? []) {
+    const stat = itemStats.get(item.shopping_list_id) ?? { total: 0, purchased: 0 };
+    stat.total += 1;
+    if (item.purchased) stat.purchased += 1;
+    itemStats.set(item.shopping_list_id, stat);
+  }
+  for (const row of rows) {
+    const listId = listByEvent.get(row.id);
+    const stat = listId != null ? itemStats.get(listId) : undefined;
+    map.set(
+      row.id,
+      buildReadiness({
+        recipeCount: recipeCount.get(row.id) ?? 0,
+        packing: row.packing_items,
+        purchased: stat?.purchased ?? 0,
+        shoppingItemCount: stat?.total ?? 0,
+        listExists: listId != null,
+      }),
+    );
+  }
+  return map;
+}
+
 async function loadEventDetail(id: number): Promise<EventDetail> {
   const db = getSupabase();
   const { data: row, error } = await db.from("events").select("*").eq("id", id).maybeSingle();
@@ -447,6 +491,13 @@ async function loadEventDetail(id: number): Promise<EventDetail> {
     ? await db.from("recipes").select("id, name").in("id", recipeIds)
     : { data: [] as Array<{ id: number; name: string }> };
   const nameById = new Map((recipeRows ?? []).map((r) => [r.id, r.name]));
+  const readiness = (await readinessMap([ev])).get(ev.id) ?? buildReadiness({
+    recipeCount: 0,
+    packing: ev.packing_items,
+    purchased: 0,
+    shoppingItemCount: 0,
+    listExists: false,
+  });
 
   return {
     id: ev.id,
@@ -465,6 +516,7 @@ async function loadEventDetail(id: number): Promise<EventDetail> {
     dietaryTags: parseDietaryTags(ev.dietary_tags),
     setupTime: ev.setup_time ?? null,
     serviceTime: ev.service_time ?? null,
+    readiness,
     endTime: ev.end_time ?? null,
     venueContact: ev.venue_contact ?? null,
     venuePhone: ev.venue_phone ?? null,
@@ -1108,9 +1160,10 @@ export const cloud = {
 
     const ids = rows.map((r) => r.id);
     const clientIds = [...new Set(rows.map((r) => r.client_id))];
-    const [{ data: clients }, { data: services }] = await Promise.all([
+    const [{ data: clients }, { data: services }, readiness] = await Promise.all([
       db.from("clients").select("id, name").in("id", clientIds),
       db.from("event_services").select("event_id, service_type").in("event_id", ids),
+      readinessMap(rows),
     ]);
     const clientName = new Map((clients ?? []).map((c) => [c.id as number, c.name as string]));
     const servicesByEvent = new Map<number, ServiceType[]>();
@@ -1134,6 +1187,13 @@ export const cloud = {
       services: servicesByEvent.get(ev.id) ?? [],
       setupTime: ev.setup_time ?? null,
       serviceTime: ev.service_time ?? null,
+      readiness: readiness.get(ev.id) ?? buildReadiness({
+        recipeCount: 0,
+        packing: ev.packing_items,
+        purchased: 0,
+        shoppingItemCount: 0,
+        listExists: false,
+      }),
     }));
   },
 

@@ -1,3 +1,4 @@
+import type { EventReadiness } from "../shared/eventReadiness";
 import type { DietaryTag, EventExpense, EventStaff, PackingItem } from "../shared/ops";
 import type { PurchaseOrderStatus, StockMovementKind } from "../shared/procurement";
 import type { TeamRole } from "../shared/roles";
@@ -107,6 +108,7 @@ export type EventSummary = {
   services: ServiceType[];
   setupTime?: string | null;
   serviceTime?: string | null;
+  readiness: EventReadiness;
 };
 
 export type EventDetail = EventSummary & {

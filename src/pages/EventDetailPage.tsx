@@ -17,6 +17,7 @@ import { QuoteBadge } from "../components/StatusBadge";
 import { recipeFitsService } from "../../shared/recipeMeta";
 import { estimateFoodCost } from "../../shared/shopping";
 import { buildEventOperatingResult, isOpenPurchaseStatus } from "../../shared/procurement";
+import { shoppingStatusLabel, type ShoppingReadiness } from "../../shared/eventReadiness";
 import {
   REPEAT_INTERVALS,
   REPEAT_INTERVAL_LABELS,
@@ -106,6 +107,7 @@ export function EventDetailPage() {
   const [repeatKind, setRepeatKind] = useState<RepeatInterval | "">("");
   const [repeatExtra, setRepeatExtra] = useState(3);
   const [eventQuotes, setEventQuotes] = useState<QuoteSummary[]>([]);
+  const [shoppingState, setShoppingState] = useState<ShoppingReadiness>("none");
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
 
   const fechaParam = searchParams.get("fecha");
@@ -202,6 +204,7 @@ export function EventDetailPage() {
               syncAttendees: x.portions === ev.attendees,
             })),
           );
+          setShoppingState(ev.readiness.shopping);
         }
       } catch (e) {
         if (alive) setError(e instanceof Error ? e.message : "No se pudo cargar");
@@ -307,7 +310,11 @@ export function EventDetailPage() {
     });
   }, [eventQuotes, salePrice, foodCost, expenses, purchaseOrders]);
   const quoteMoneyTotals = useMemo(() => clientMoneyFromQuotes(eventQuotes), [eventQuotes]);
-  const latestQuoteMoney = eventQuotes[0] ? quoteMoney(eventQuotes[0]) : null;
+  const latestQuote = useMemo(() => {
+    if (!eventQuotes.length) return null;
+    return [...eventQuotes].sort((a, b) => b.version - a.version || b.id - a.id)[0];
+  }, [eventQuotes]);
+  const latestQuoteMoney = latestQuote ? quoteMoney(latestQuote) : null;
 
   const menuByService = useMemo(() => {
     const map = new Map<ServiceType, MenuRow[]>();
@@ -517,12 +524,17 @@ export function EventDetailPage() {
             <li>
               <span>
                 <strong>Compras</strong>
-                <span className="meta"> {menu.length ? "Genera o revisa la lista" : "Primero el menú"}</span>
+                <span className="meta"> {shoppingStatusLabel(shoppingState, menu.length)}</span>
               </span>
               {menu.length ? (
-                <Link className="btn" to={`/compras/${eventId}`}>
-                  Ver compras
-                </Link>
+                <span className="page-actions">
+                  <span className={`badge ${shoppingState === "done" ? "tone-good" : "tone-warn"}`}>
+                    {shoppingState === "done" ? "Listo" : "Pendiente"}
+                  </span>
+                  <Link className="btn" to={`/compras/${eventId}`}>
+                    Ver compras
+                  </Link>
+                </span>
               ) : (
                 <span className="badge tone-neutral">—</span>
               )}
@@ -534,7 +546,7 @@ export function EventDetailPage() {
                   {" "}
                   {eventQuotes.length
                     ? `${eventQuotes.length} guardada(s)${
-                        eventQuotes[0].status === "aceptada"
+                        latestQuote?.status === "aceptada"
                           ? " · aceptada"
                           : latestQuoteMoney && latestQuoteMoney.deposit > 0
                             ? ` · pagado ${formatMoney(latestQuoteMoney.deposit)}`
@@ -543,9 +555,9 @@ export function EventDetailPage() {
                     : "Aún no hay propuesta"}
                 </span>
               </span>
-              {eventQuotes[0] ? (
+              {latestQuote ? (
                 <span className="page-actions">
-                  <QuoteBadge status={eventQuotes[0].status} />
+                  <QuoteBadge status={latestQuote.status} />
                   <Link className="btn" to={`/cotizaciones?eventId=${eventId}`}>
                     Ver
                   </Link>

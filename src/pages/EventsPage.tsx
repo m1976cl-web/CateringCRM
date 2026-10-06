@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, formatDate, formatMoney, type EventSummary, type QuoteSummary } from "../api";
 import { EmptyState, PageHeader } from "../components/EmptyState";
+import { ReadinessMarks } from "../components/ReadinessMarks";
 import { SearchBar } from "../components/SearchBar";
 import { StatusBadge } from "../components/StatusBadge";
 import { matchesQuery } from "../search";
@@ -117,6 +118,7 @@ export function EventsPage() {
                 <div className="meta">
                   {ev.services.map((s) => SERVICE_TYPE_LABELS[s]).join(" · ")}
                 </div>
+                <ReadinessMarks event={ev} quotes={quotes} />
               </div>
               <StatusBadge status={ev.status} />
             </Link>

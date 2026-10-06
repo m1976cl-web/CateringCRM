@@ -32,6 +32,7 @@ import {
 } from "../shared/roles";
 import { isQuoteOfferOpen, resolveValidUntil } from "../shared/quoteOffer";
 import { isQuoteSuperseded } from "../shared/quoteHistory";
+import { buildReadiness } from "../shared/eventReadiness";
 import { DEMO_USER_EMAIL, DEMO_USER_NAME, parseDemoLoginFlag } from "../shared/demoLogin";
 import {
   quoteTotal,
@@ -308,6 +309,8 @@ function withSupplierName(
 
 function eventSummary(store: Store, ev: Store["events"][number]): EventSummary {
   const client = store.clients.find((c) => c.id === ev.clientId);
+  const list = store.shoppingLists.find((row) => row.eventId === ev.id);
+  const purchased = list?.items.filter((item) => item.purchased).length ?? 0;
   return {
     id: ev.id,
     clientId: ev.clientId,
@@ -321,6 +324,13 @@ function eventSummary(store: Store, ev: Store["events"][number]): EventSummary {
     services: ev.services,
     setupTime: ev.setupTime ?? null,
     serviceTime: ev.serviceTime ?? null,
+    readiness: buildReadiness({
+      recipeCount: ev.recipes.length,
+      packing: ev.packingItems,
+      purchased,
+      shoppingItemCount: list?.items.length ?? 0,
+      listExists: Boolean(list),
+    }),
   };
 }
 

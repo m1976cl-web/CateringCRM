@@ -2,9 +2,10 @@ import type { Config, Context } from "@netlify/functions";
 import { desc, eq } from "drizzle-orm";
 import { db } from "../../db";
 import { clients, eventServices, events } from "../../db/schema";
+import { buildReadiness } from "../../shared/eventReadiness";
 import { error, json, now, readJson } from "./_shared/http";
 import { denyIfUnauthorized } from "./_shared/auth";
-import { eventDetail, parseEventBody, saveEventRelations } from "./_shared/events";
+import { eventDetail, loadReadiness, parseEventBody, saveEventRelations } from "./_shared/events";
 
 export default async (req: Request, _context: Context) => {
   const denied = await denyIfUnauthorized(req);
@@ -23,19 +24,41 @@ export default async (req: Request, _context: Context) => {
         estimatedCost: events.estimatedCost,
         setupTime: events.setupTime,
         serviceTime: events.serviceTime,
+        packingItems: events.packingItems,
         clientName: clients.name,
       })
       .from(events)
       .innerJoin(clients, eq(events.clientId, clients.id))
       .orderBy(desc(events.eventDate));
 
+    const readiness = await loadReadiness(rows);
     const withServices = await Promise.all(
       rows.map(async (row) => {
         const services = await db
           .select({ serviceType: eventServices.serviceType })
           .from(eventServices)
           .where(eq(eventServices.eventId, row.id));
-        return { ...row, services: services.map((s) => s.serviceType) };
+        return {
+          id: row.id,
+          clientId: row.clientId,
+          title: row.title,
+          eventDate: row.eventDate,
+          location: row.location,
+          attendees: row.attendees,
+          status: row.status,
+          estimatedCost: row.estimatedCost,
+          setupTime: row.setupTime,
+          serviceTime: row.serviceTime,
+          clientName: row.clientName,
+          services: services.map((s) => s.serviceType),
+          readiness: readiness.get(row.id) ?? buildReadiness({
+            recipeCount: 0,
+            packing: row.packingItems,
+            purchased: 0,
+            shoppingItemCount: 0,
+            listExists: false,
+          }),
+        };
       }),
     );
     return json(withServices);

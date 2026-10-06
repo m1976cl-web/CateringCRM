@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { db } from "../../../db";
 import {
   clients,
@@ -6,7 +6,10 @@ import {
   eventServices,
   events,
   recipes,
+  shoppingListItems,
+  shoppingLists,
 } from "../../../db/schema";
+import { buildReadiness, type EventReadiness } from "../../../shared/eventReadiness";
 import { isEventStatus, isServiceType, type ServiceType } from "../../../shared/types";
 import {
   defaultPackingItems,
@@ -68,8 +71,19 @@ export async function eventDetail(eventId: number) {
     .innerJoin(recipes, eq(eventRecipes.recipeId, recipes.id))
     .where(eq(eventRecipes.eventId, eventId));
 
+  const readiness =
+    (await loadReadiness([{ id: row.id, packingItems: row.packingItems }])).get(row.id) ??
+    buildReadiness({
+      recipeCount: menu.length,
+      packing: row.packingItems,
+      purchased: 0,
+      shoppingItemCount: 0,
+      listExists: false,
+    });
+
   return {
     ...row,
+    readiness,
     dietaryTags: parseDietaryTags(row.dietaryTags),
     packingItems: parsePackingItems(row.packingItems).length
       ? parsePackingItems(row.packingItems)
@@ -79,6 +93,61 @@ export async function eventDetail(eventId: number) {
     services: services.map((s) => s.serviceType),
     recipes: menu,
   };
+}
+
+export async function loadReadiness(
+  rows: Array<{ id: number; packingItems: unknown }>,
+): Promise<Map<number, EventReadiness>> {
+  const map = new Map<number, EventReadiness>();
+  if (!rows.length) return map;
+  const ids = rows.map((row) => row.id);
+  const [recipeRows, lists] = await Promise.all([
+    db
+      .select({ eventId: eventRecipes.eventId })
+      .from(eventRecipes)
+      .where(inArray(eventRecipes.eventId, ids)),
+    db
+      .select({ id: shoppingLists.id, eventId: shoppingLists.eventId })
+      .from(shoppingLists)
+      .where(inArray(shoppingLists.eventId, ids)),
+  ]);
+  const recipeCount = new Map<number, number>();
+  for (const recipe of recipeRows) {
+    recipeCount.set(recipe.eventId, (recipeCount.get(recipe.eventId) ?? 0) + 1);
+  }
+  const listByEvent = new Map(lists.map((list) => [list.eventId, list.id]));
+  const listIds = lists.map((list) => list.id);
+  const items = listIds.length
+    ? await db
+        .select({
+          shoppingListId: shoppingListItems.shoppingListId,
+          purchased: shoppingListItems.purchased,
+        })
+        .from(shoppingListItems)
+        .where(inArray(shoppingListItems.shoppingListId, listIds))
+    : [];
+  const itemStats = new Map<number, { total: number; purchased: number }>();
+  for (const item of items) {
+    const stat = itemStats.get(item.shoppingListId) ?? { total: 0, purchased: 0 };
+    stat.total += 1;
+    if (item.purchased) stat.purchased += 1;
+    itemStats.set(item.shoppingListId, stat);
+  }
+  for (const row of rows) {
+    const listId = listByEvent.get(row.id);
+    const stat = listId != null ? itemStats.get(listId) : undefined;
+    map.set(
+      row.id,
+      buildReadiness({
+        recipeCount: recipeCount.get(row.id) ?? 0,
+        packing: row.packingItems,
+        purchased: stat?.purchased ?? 0,
+        shoppingItemCount: stat?.total ?? 0,
+        listExists: listId != null,
+      }),
+    );
+  }
+  return map;
 }
 
 export async function saveEventRelations(
