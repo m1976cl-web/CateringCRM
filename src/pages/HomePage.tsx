@@ -13,6 +13,7 @@ import {
   type QuoteSummary,
 } from "../api";
 import { PageHeader } from "../components/EmptyState";
+import { ReadinessMarks } from "../components/ReadinessMarks";
 import { QuoteBadge, StatusBadge } from "../components/StatusBadge";
 import { clientMoneyFromQuotes, collectionsThisWeek, quoteMoney } from "../quoteDisplay";
 import { useAuth } from "../components/AuthGate";
@@ -83,6 +84,7 @@ export function HomePage() {
     () => orders.filter((order) => isOpenPurchaseStatus(order.status)),
     [orders],
   );
+  const eventsById = useMemo(() => new Map(events.map((ev) => [ev.id, ev])), [events]);
 
   if (loading) return <div className="loading">Cargando resumen…</div>;
   if (error) return <div className="error-box">{error}</div>;
@@ -203,6 +205,7 @@ export function HomePage() {
                     {ev.clientName} · {formatDate(ev.eventDate)} · {ev.attendees} personas
                     {money.billed > 0 ? ` · saldo ${formatMoney(money.balance)}` : ""}
                   </div>
+                  <ReadinessMarks event={ev} quotes={quotes} />
                 </div>
                 <StatusBadge status={ev.status} />
               </Link>
@@ -270,17 +273,21 @@ export function HomePage() {
             <p className="meta">No hay eventos próximos. Crea el primero.</p>
           ) : (
             <div className="list" style={{ marginTop: 12 }}>
-              {data.upcoming.map((ev) => (
+              {data.upcoming.map((ev) => {
+                const full = eventsById.get(ev.id);
+                return (
                 <Link key={ev.id} to={`/eventos/${ev.id}`} className="list-item">
                   <div>
                     <h3>{ev.title}</h3>
                     <div className="meta">
                       {ev.clientName} · {formatDate(ev.eventDate)} · {ev.attendees} personas
                     </div>
+                    {full ? <ReadinessMarks event={full} quotes={quotes} /> : null}
                   </div>
                   <StatusBadge status={ev.status} />
                 </Link>
-              ))}
+                );
+              })}
             </div>
           )}
         </section>
