@@ -16,7 +16,7 @@ import { PageHeader } from "../components/EmptyState";
 import { QuoteBadge } from "../components/StatusBadge";
 import { recipeFitsService } from "../../shared/recipeMeta";
 import { estimateFoodCost } from "../../shared/shopping";
-import { buildEventOperatingResult } from "../../shared/procurement";
+import { buildEventOperatingResult, isOpenPurchaseStatus } from "../../shared/procurement";
 import {
   REPEAT_INTERVALS,
   REPEAT_INTERVAL_LABELS,
@@ -658,6 +658,17 @@ export function EventDetailPage() {
               ? ` Hay ${operating.openOrders} orden(es) sin cerrar.`
               : ""}
           </p>
+          {purchaseOrders.some((order) => isOpenPurchaseStatus(order.status)) ? (
+            <ul className="meta" style={{ marginTop: 0 }}>
+              {purchaseOrders
+                .filter((order) => isOpenPurchaseStatus(order.status))
+                .map((order) => (
+                  <li key={order.id}>
+                    {order.supplierName || "Sin proveedor"} · {order.items.length} ítem(s)
+                  </li>
+                ))}
+            </ul>
+          ) : null}
           <Link className="btn" to={`/compras/${eventId}`}>
             Ver compras y órdenes
           </Link>

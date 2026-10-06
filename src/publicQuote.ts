@@ -9,6 +9,7 @@ export type PublicQuoteView = {
   notes: string | null;
   status: QuoteStatus;
   version: number;
+  validUntil?: string | null;
   eventTitle: string;
   eventDate: string;
   location: string | null;

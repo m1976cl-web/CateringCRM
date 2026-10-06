@@ -4,6 +4,7 @@ import { api, formatDate, formatMoney } from "../api";
 import type { PublicQuoteView } from "../publicQuote";
 import { quoteTaxBreakdown, loadCompanySettings } from "../settings";
 import { QUOTE_STATUS_LABELS } from "../../shared/types";
+import { calendarDay, isQuoteOfferOpen } from "../../shared/quoteOffer";
 
 export function PublicQuotePage() {
   const rawToken = String(useParams().token ?? "");
@@ -65,6 +66,10 @@ export function PublicQuotePage() {
   if (!quote || !tax) return null;
 
   const decided = quote.status === "aceptada" || quote.status === "rechazada";
+  const offerOpen = isQuoteOfferOpen(quote.validUntil);
+  const validLabel = quote.validUntil
+    ? new Date(`${calendarDay(quote.validUntil)}T12:00:00`).toLocaleDateString("es-CL")
+    : null;
 
   return (
     <div className="print-page" style={{ maxWidth: 720, margin: "0 auto", padding: 16 }}>
@@ -79,6 +84,7 @@ export function PublicQuotePage() {
         <div style={{ textAlign: "right" }}>
           <div>{QUOTE_STATUS_LABELS[quote.status]}</div>
           <div className="meta">{formatDate(quote.quoteDate)}</div>
+          {validLabel ? <div className="meta">Válida hasta {validLabel}</div> : null}
         </div>
       </header>
 
@@ -135,7 +141,7 @@ export function PublicQuotePage() {
         </section>
       ) : null}
 
-      {!decided ? (
+      {!decided && offerOpen ? (
         <div className="form-actions" style={{ marginTop: 24 }}>
           <button
             type="button"
@@ -151,7 +157,9 @@ export function PublicQuotePage() {
         </div>
       ) : (
         <p className="meta" style={{ marginTop: 24 }}>
-          Esta cotización ya fue {quote.status === "aceptada" ? "aceptada" : "rechazada"}.
+          {decided
+            ? `Esta cotización ya fue ${quote.status === "aceptada" ? "aceptada" : "rechazada"}.`
+            : "Esta cotización ya no está vigente. Pide una versión nueva."}
         </p>
       )}
     </div>

@@ -9,6 +9,7 @@ import {
   type Dashboard,
   type EventSummary,
   type Ingredient,
+  type PurchaseOrder,
   type QuoteSummary,
 } from "../api";
 import { PageHeader } from "../components/EmptyState";
@@ -16,6 +17,7 @@ import { QuoteBadge, StatusBadge } from "../components/StatusBadge";
 import { clientMoneyFromQuotes, collectionsThisWeek, quoteMoney } from "../quoteDisplay";
 import { useAuth } from "../components/AuthGate";
 import { canEditQuotes } from "../../shared/roles";
+import { isOpenPurchaseStatus } from "../../shared/procurement";
 
 export function HomePage() {
   const { user } = useAuth();
@@ -23,6 +25,7 @@ export function HomePage() {
   const [events, setEvents] = useState<EventSummary[]>([]);
   const [quotes, setQuotes] = useState<QuoteSummary[]>([]);
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
+  const [orders, setOrders] = useState<PurchaseOrder[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [empty, setEmpty] = useState(false);
@@ -32,18 +35,20 @@ export function HomePage() {
     setLoading(true);
     setError("");
     try {
-      const [d, isEmpty, evs, qs, ings] = await Promise.all([
+      const [d, isEmpty, evs, qs, ings, pos] = await Promise.all([
         api.dashboard(),
         api.isEmpty(),
         api.listEvents(),
         api.listQuotes(),
         api.listIngredients(),
+        api.listPurchaseOrders(),
       ]);
       setData(d);
       setEmpty(isEmpty);
       setEvents(evs);
       setQuotes(qs);
       setIngredients(ings);
+      setOrders(pos);
     } catch (e) {
       setError(e instanceof Error ? e.message : "No se pudo cargar el inicio");
     } finally {
@@ -64,11 +69,20 @@ export function HomePage() {
     [quotes],
   );
   const weekDue = useMemo(() => collectionsThisWeek(events, quotes), [events, quotes]);
+  const lowStock = useMemo(
+    () => ingredients.filter((i) => (i.minStock ?? 0) > 0 && (i.stockQty ?? 0) <= (i.minStock ?? 0)),
+    [ingredients],
+  );
   const zeroStock = useMemo(() => {
+    if (lowStock.length > 0) return [];
     const usesStock = ingredients.some((i) => (i.stockQty ?? 0) > 0);
     if (!usesStock) return [];
-    return ingredients.filter((i) => (i.stockQty ?? 0) <= 0);
-  }, [ingredients]);
+    return ingredients.filter((i) => (i.stockQty ?? 0) <= 0 && (i.minStock ?? 0) <= 0);
+  }, [ingredients, lowStock.length]);
+  const openOrders = useMemo(
+    () => orders.filter((order) => isOpenPurchaseStatus(order.status)),
+    [orders],
+  );
 
   if (loading) return <div className="loading">Cargando resumen…</div>;
   if (error) return <div className="error-box">{error}</div>;
@@ -194,6 +208,41 @@ export function HomePage() {
               </Link>
               );
             })}
+          </div>
+        </section>
+      ) : null}
+
+      {openOrders.length > 0 ? (
+        <section className="panel" style={{ marginBottom: 16 }}>
+          <h2>Órdenes sin recibir</h2>
+          <p className="meta">{openOrders.length} orden(es) enviadas que todavía no se cerraron.</p>
+          <div className="list" style={{ marginTop: 12 }}>
+            {openOrders.slice(0, 8).map((order) => (
+              <Link key={order.id} to={order.eventId ? `/compras/${order.eventId}` : "/compras"} className="list-item">
+                <div>
+                  <h3>{order.supplierName || "Sin proveedor"}</h3>
+                  <div className="meta">
+                    {order.eventTitle || "Evento"} · {order.items.length} ítem(s)
+                  </div>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {lowStock.length > 0 ? (
+        <section className="panel" style={{ marginBottom: 16 }}>
+          <h2>Por reponer</h2>
+          <p className="meta">
+            {lowStock.length} ingrediente(s) en el mínimo o por debajo.
+          </p>
+          <div className="chip-row" style={{ marginTop: 8 }}>
+            {lowStock.slice(0, 12).map((i) => (
+              <Link key={i.id} to="/ingredientes" className="badge tone-warn">
+                {i.name} · {i.stockQty ?? 0}/{i.minStock}
+              </Link>
+            ))}
           </div>
         </section>
       ) : null}

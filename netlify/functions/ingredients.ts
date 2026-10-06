@@ -4,11 +4,13 @@ import { db } from "../../db";
 import { ingredients, suppliers } from "../../db/schema";
 import { isIngredientUnit } from "../../shared/types";
 import { asNumber, error, json, now, readJson } from "./_shared/http";
-import { denyIfUnauthorized } from "./_shared/auth";
+import { denyIfCannot, denyIfUnauthorized } from "./_shared/auth";
+import { canEditPrices } from "../../shared/roles";
 import { applyCatalogDelta } from "./_shared/stock";
 
 export default async (req: Request, _context: Context) => {
-  const denied = await denyIfUnauthorized(req);
+  const denied =
+    req.method === "GET" ? await denyIfUnauthorized(req) : await denyIfCannot(req, canEditPrices);
   if (denied) return denied;
 
   if (req.method === "GET") {
@@ -20,6 +22,7 @@ export default async (req: Request, _context: Context) => {
         supplierId: ingredients.supplierId,
         unitPrice: ingredients.unitPrice,
         stockQty: ingredients.stockQty,
+        minStock: ingredients.minStock,
         createdAt: ingredients.createdAt,
         updatedAt: ingredients.updatedAt,
         supplierName: suppliers.name,
@@ -51,6 +54,7 @@ export default async (req: Request, _context: Context) => {
           ? null
           : asNumber(body.unitPrice),
       stockQty: 0,
+      minStock: Math.max(0, asNumber(body.minStock, 0)),
       createdAt: now(),
       updatedAt: now(),
     })

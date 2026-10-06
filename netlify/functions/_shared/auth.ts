@@ -1,6 +1,6 @@
-import { and, count, eq, gt, ne } from "drizzle-orm";
+import { and, count, eq, gt, isNotNull, ne } from "drizzle-orm";
 import { db } from "../../../db";
-import { teamRecovery, teamSessions, teamUsers } from "../../../db/schema";
+import { teamSessions, teamUsers } from "../../../db/schema";
 import {
   hashPassword,
   normalizeRecoveryCode,
@@ -158,6 +158,9 @@ export function isDemoLoginEnabled(): boolean {
 }
 
 export async function loginDemo(): Promise<{ user: AuthUser; token: string }> {
+  if (await hasNonDemoUsers()) {
+    throw new Error("El acceso de prueba está desactivado");
+  }
   let row = await findUserByEmail(DEMO_USER_EMAIL);
   if (!row) {
     const user = await createTeamUser({
@@ -182,29 +185,45 @@ export async function countTeamUsers(): Promise<number> {
   return row?.value ?? 0;
 }
 
-export async function hasRecoveryCode(): Promise<boolean> {
-  const [row] = await db.select({ id: teamRecovery.id }).from(teamRecovery).limit(1);
+export async function userHasRecovery(userId: number): Promise<boolean> {
+  const [row] = await db
+    .select({ recoveryHash: teamUsers.recoveryHash })
+    .from(teamUsers)
+    .where(eq(teamUsers.id, userId))
+    .limit(1);
+  return Boolean(row?.recoveryHash);
+}
+
+export async function anyUserHasRecovery(): Promise<boolean> {
+  const [row] = await db
+    .select({ id: teamUsers.id })
+    .from(teamUsers)
+    .where(isNotNull(teamUsers.recoveryHash))
+    .limit(1);
   return Boolean(row);
 }
 
-export async function replaceRecoveryCode(): Promise<string> {
+export async function issueUserRecovery(userId: number): Promise<string> {
   const code = randomRecoveryCode();
   const hashed = await hashPassword(normalizeRecoveryCode(code));
-  await db.delete(teamRecovery);
-  await db.insert(teamRecovery).values({
-    codeSalt: hashed.salt,
-    codeHash: hashed.hash,
-    createdAt: now(),
-  });
+  await db
+    .update(teamUsers)
+    .set({
+      recoverySalt: hashed.salt,
+      recoveryHash: hashed.hash,
+      updatedAt: now(),
+    })
+    .where(eq(teamUsers.id, userId));
   return code;
 }
 
-export async function verifyRecoveryCode(code: string): Promise<boolean> {
+export async function verifyUserRecovery(
+  user: { recoverySalt: string | null; recoveryHash: string | null },
+  code: string,
+): Promise<boolean> {
   const normalized = normalizeRecoveryCode(code);
-  if (!normalized) return false;
-  const [row] = await db.select().from(teamRecovery).limit(1);
-  if (!row) return false;
-  return verifyPassword(normalized, row.codeSalt, row.codeHash);
+  if (!normalized || !user.recoverySalt || !user.recoveryHash) return false;
+  return verifyPassword(normalized, user.recoverySalt, user.recoveryHash);
 }
 
 export async function destroyUserSessions(userId: number): Promise<void> {

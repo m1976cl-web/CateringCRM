@@ -3,7 +3,8 @@ import { eq } from "drizzle-orm";
 import { db } from "../../db";
 import { ingredients, recipeIngredients, recipes } from "../../db/schema";
 import { asNumber, asOptionalString, error, json, now, parseId, readJson } from "./_shared/http";
-import { denyIfUnauthorized } from "./_shared/auth";
+import { denyIfCannot, denyIfUnauthorized } from "./_shared/auth";
+import { canDeleteCatalog, canEditPrices } from "../../shared/roles";
 
 async function recipeWithIngredients(recipeId: number) {
   const [recipe] = await db.select().from(recipes).where(eq(recipes.id, recipeId)).limit(1);
@@ -25,7 +26,12 @@ async function recipeWithIngredients(recipeId: number) {
 }
 
 export default async (req: Request, context: Context) => {
-  const denied = await denyIfUnauthorized(req);
+  const denied =
+    req.method === "GET"
+      ? await denyIfUnauthorized(req)
+      : req.method === "DELETE"
+        ? await denyIfCannot(req, canDeleteCatalog)
+        : await denyIfCannot(req, canEditPrices);
   if (denied) return denied;
 
   const id = parseId(context.params?.id);

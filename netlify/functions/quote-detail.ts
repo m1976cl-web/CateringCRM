@@ -3,7 +3,9 @@ import { eq } from "drizzle-orm";
 import { db } from "../../db";
 import { clients, events, quotes } from "../../db/schema";
 import { isQuoteStatus, quoteTotal } from "../../shared/types";
-import { denyIfUnauthorized } from "./_shared/auth";
+import { denyIfCannot, denyIfUnauthorized } from "./_shared/auth";
+import { canEditQuotes } from "../../shared/roles";
+import { resolveValidUntil } from "../../shared/quoteOffer";
 import { asNumber, asOptionalString, error, json, now, parseId, readJson } from "./_shared/http";
 import { parseItems } from "./_shared/quotes";
 import { syncEventFromQuote } from "./_shared/quoteLifecycle";
@@ -26,6 +28,7 @@ async function quoteDetail(id: number) {
       parentQuoteId: quotes.parentQuoteId,
       publicToken: quotes.publicToken,
       dueDate: quotes.dueDate,
+      validUntil: quotes.validUntil,
       lastContactedAt: quotes.lastContactedAt,
       createdAt: quotes.createdAt,
       updatedAt: quotes.updatedAt,
@@ -49,7 +52,8 @@ async function quoteDetail(id: number) {
 }
 
 export default async (req: Request, context: Context) => {
-  const denied = await denyIfUnauthorized(req);
+  const denied =
+    req.method === "GET" ? await denyIfUnauthorized(req) : await denyIfCannot(req, canEditQuotes);
   if (denied) return denied;
 
   const id = parseId(context.params?.id);
@@ -86,6 +90,9 @@ export default async (req: Request, context: Context) => {
         foodCost: Math.max(0, asNumber(body.foodCost, 0)),
         ...(body.dueDate !== undefined
           ? { dueDate: body.dueDate ? new Date(String(body.dueDate)) : null }
+          : {}),
+        ...(body.validUntil !== undefined
+          ? { validUntil: body.validUntil ? resolveValidUntil(body.validUntil, quoteDate) : null }
           : {}),
         ...(body.lastContactedAt !== undefined
           ? { lastContactedAt: body.lastContactedAt ? new Date(String(body.lastContactedAt)) : null }

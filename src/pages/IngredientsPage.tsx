@@ -10,7 +10,14 @@ import { INGREDIENT_UNITS, type IngredientUnit } from "../../shared/types";
 import { useAuth } from "../components/AuthGate";
 import { canDeleteCatalog, canEditPrices } from "../../shared/roles";
 
-const blank = { name: "", unit: "g" as IngredientUnit, supplierId: "", unitPrice: "", stockQty: "0" };
+const blank = {
+  name: "",
+  unit: "g" as IngredientUnit,
+  supplierId: "",
+  unitPrice: "",
+  stockQty: "0",
+  minStock: "0",
+};
 
 export function IngredientsPage() {
   const { user } = useAuth();
@@ -70,6 +77,7 @@ export function IngredientsPage() {
       supplierId: row.supplierId != null ? String(row.supplierId) : "",
       unitPrice: row.unitPrice != null ? String(row.unitPrice) : "",
       stockQty: String(row.stockQty ?? 0),
+      minStock: String(row.minStock ?? 0),
     });
     void loadMovements(row.id);
   }
@@ -110,6 +118,7 @@ export function IngredientsPage() {
         supplierId: form.supplierId === "" ? null : Number(form.supplierId),
         unitPrice: form.unitPrice === "" ? null : Number(form.unitPrice),
         stockQty: form.stockQty === "" ? 0 : Number(form.stockQty),
+        minStock: form.minStock === "" ? 0 : Number(form.minStock),
       };
       if (editingId) await api.updateIngredient(editingId, payload);
       else await api.createIngredient(payload);
@@ -184,6 +193,7 @@ export function IngredientsPage() {
               />
             </FormField>
           </div>
+          <div className="grid-2">
           <FormField
             label="Stock en bodega"
             hint="Al guardar un número distinto queda un ajuste. Entradas, mermas y reservas se anotan abajo."
@@ -194,8 +204,23 @@ export function IngredientsPage() {
               step="0.001"
               value={form.stockQty}
               onChange={(e) => setForm({ ...form, stockQty: e.target.value })}
+              disabled={!canEditPrices(user.role)}
             />
           </FormField>
+          <FormField
+            label="Mínimo"
+            hint="El inicio avisa cuando el stock llega a este número."
+          >
+            <input
+              type="number"
+              min={0}
+              step="0.001"
+              value={form.minStock}
+              onChange={(e) => setForm({ ...form, minStock: e.target.value })}
+              disabled={!canEditPrices(user.role)}
+            />
+          </FormField>
+          </div>
           <FormField label="Proveedor">
             <select
               value={form.supplierId}
@@ -220,7 +245,7 @@ export function IngredientsPage() {
             </p>
           ) : null}
           <div className="form-actions">
-            <button className="btn primary" type="submit" disabled={saving}>
+            <button className="btn primary" type="submit" disabled={saving || !canEditPrices(user.role)}>
               {saving ? "Guardando…" : "Guardar"}
             </button>
             {editingId ? (
@@ -311,6 +336,11 @@ export function IngredientsPage() {
                       <td>{formatMoney(row.unitPrice)}</td>
                       <td>
                         {row.stockQty ?? 0} {row.unit}
+                        {(row.minStock ?? 0) > 0 && (row.stockQty ?? 0) <= (row.minStock ?? 0) ? (
+                          <span className="badge tone-warn" style={{ marginLeft: 8 }}>
+                            mínimo {row.minStock}
+                          </span>
+                        ) : null}
                       </td>
                       <td>
                         <div className="page-actions">

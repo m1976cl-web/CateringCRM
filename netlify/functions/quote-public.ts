@@ -2,6 +2,7 @@ import type { Config, Context } from "@netlify/functions";
 import { eq } from "drizzle-orm";
 import { db } from "../../db";
 import { clients, events, quotes } from "../../db/schema";
+import { isQuoteOfferOpen } from "../../shared/quoteOffer";
 import { error, json } from "./_shared/http";
 import { syncEventFromQuote } from "./_shared/quoteLifecycle";
 
@@ -16,6 +17,7 @@ async function loadPublic(token: string) {
       notes: quotes.notes,
       status: quotes.status,
       version: quotes.version,
+      validUntil: quotes.validUntil,
       eventTitle: events.title,
       eventDate: events.eventDate,
       location: events.location,
@@ -44,11 +46,14 @@ export default async (req: Request, context: Context) => {
   if (req.method === "POST") {
     const body = (await req.json().catch(() => ({}))) as { action?: string };
     const [current] = await db
-      .select({ id: quotes.id, eventId: quotes.eventId })
+      .select({ id: quotes.id, eventId: quotes.eventId, validUntil: quotes.validUntil })
       .from(quotes)
       .where(eq(quotes.publicToken, token))
       .limit(1);
     if (!current) return error("Cotización no encontrada", 404);
+    if (!isQuoteOfferOpen(current.validUntil)) {
+      return error("Esta cotización ya no está vigente", 410);
+    }
     const action = body.action;
     if (action !== "accept" && action !== "reject") return error("Acción no válida");
     const status = action === "accept" ? "aceptada" : "rechazada";

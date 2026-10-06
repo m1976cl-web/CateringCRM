@@ -98,6 +98,7 @@ export type IngredientInput = {
   supplierId?: number | null;
   unitPrice?: number | null;
   stockQty?: number | null;
+  minStock?: number | null;
 };
 
 export type RecipeIngredientInput = {
@@ -158,6 +159,7 @@ export type QuoteInput = {
   foodCost?: number;
   payments?: QuotePaymentInput[];
   dueDate?: string | null;
+  validUntil?: string | null;
   lastContactedAt?: string | null;
 };
 

@@ -3,10 +3,16 @@ import { eq } from "drizzle-orm";
 import { db } from "../../db";
 import { clients } from "../../db/schema";
 import { asOptionalString, error, json, now, parseId, readJson } from "./_shared/http";
-import { denyIfUnauthorized } from "./_shared/auth";
+import { denyIfCannot, denyIfUnauthorized } from "./_shared/auth";
+import { canDeleteCatalog, canEditClients } from "../../shared/roles";
 
 export default async (req: Request, context: Context) => {
-  const denied = await denyIfUnauthorized(req);
+  const denied =
+    req.method === "GET"
+      ? await denyIfUnauthorized(req)
+      : req.method === "DELETE"
+        ? await denyIfCannot(req, canDeleteCatalog)
+        : await denyIfCannot(req, canEditClients);
   if (denied) return denied;
 
   const id = parseId(context.params?.id);

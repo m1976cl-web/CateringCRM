@@ -3,12 +3,14 @@ import { desc, eq } from "drizzle-orm";
 import { db } from "../../db";
 import { quotes } from "../../db/schema";
 import { randomToken } from "../../shared/password";
-import { denyIfUnauthorized } from "./_shared/auth";
+import { denyIfCannot } from "./_shared/auth";
+import { canEditQuotes } from "../../shared/roles";
+import { resolveValidUntil } from "../../shared/quoteOffer";
 import { error, json, now, parseId } from "./_shared/http";
 import { paymentsForQuote, replaceQuotePayments } from "./_shared/quotePayments";
 
 export default async (req: Request, context: Context) => {
-  const denied = await denyIfUnauthorized(req);
+  const denied = await denyIfCannot(req, canEditQuotes);
   if (denied) return denied;
   if (req.method !== "POST") return error("Método no permitido", 405);
 
@@ -41,6 +43,7 @@ export default async (req: Request, context: Context) => {
       parentQuoteId: source.id,
       publicToken: randomToken().slice(0, 32),
       dueDate: source.dueDate,
+      validUntil: resolveValidUntil(null, now()),
       createdAt: now(),
       updatedAt: now(),
     })

@@ -3,7 +3,9 @@ import { desc, eq } from "drizzle-orm";
 import { db } from "../../db";
 import { clients, events, quotes } from "../../db/schema";
 import { randomToken } from "../../shared/password";
-import { denyIfUnauthorized } from "./_shared/auth";
+import { denyIfCannot, denyIfUnauthorized } from "./_shared/auth";
+import { canEditQuotes } from "../../shared/roles";
+import { resolveValidUntil } from "../../shared/quoteOffer";
 import { asNumber, asOptionalString, error, json, now, readJson } from "./_shared/http";
 import { parseItems } from "./_shared/quotes";
 import { syncEventFromQuote } from "./_shared/quoteLifecycle";
@@ -12,7 +14,8 @@ import { sumPayments } from "../../shared/quoteLifecycle";
 import { isQuoteStatus, quoteTotal } from "../../shared/types";
 
 export default async (req: Request, _context: Context) => {
-  const denied = await denyIfUnauthorized(req);
+  const denied =
+    req.method === "GET" ? await denyIfUnauthorized(req) : await denyIfCannot(req, canEditQuotes);
   if (denied) return denied;
 
   if (req.method === "GET") {
@@ -32,6 +35,7 @@ export default async (req: Request, _context: Context) => {
         parentQuoteId: quotes.parentQuoteId,
         publicToken: quotes.publicToken,
         dueDate: quotes.dueDate,
+        validUntil: quotes.validUntil,
         lastContactedAt: quotes.lastContactedAt,
         createdAt: quotes.createdAt,
         eventTitle: events.title,
@@ -81,6 +85,7 @@ export default async (req: Request, _context: Context) => {
       version: 1,
       publicToken: randomToken().slice(0, 32),
       dueDate: dueDate && !Number.isNaN(dueDate.getTime()) ? dueDate : null,
+      validUntil: resolveValidUntil(body.validUntil, quoteDate),
       createdAt: now(),
       updatedAt: now(),
     })

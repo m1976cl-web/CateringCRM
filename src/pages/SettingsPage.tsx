@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, canClearAllData, getDataMode, getDataModeLabel, type AuthUser } from "../api";
+import { setSessionToken } from "../session";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { useAuth } from "../components/AuthGate";
 import { PageHeader } from "../components/EmptyState";
@@ -80,10 +81,11 @@ export function SettingsPage() {
   async function changePassword(e: React.FormEvent) {
     e.preventDefault();
     try {
-      await api.authChangePassword({ currentPassword, password: nextPassword });
+      const res = await api.authChangePassword({ currentPassword, password: nextPassword });
+      if (res.token) setSessionToken(res.token);
       setCurrentPassword("");
       setNextPassword("");
-      setMsg("Contraseña actualizada.");
+      setMsg("Contraseña actualizada. Los otros dispositivos de esta cuenta quedaron cerrados.");
       setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo cambiar la contraseña");
@@ -468,8 +470,8 @@ export function SettingsPage() {
           <h2>Código de recuperación</h2>
           <p className="meta">
             {hasRecovery
-              ? "El equipo ya tiene un código. Si lo perdiste, genera uno nuevo: el anterior deja de servir. En el login usa “Olvidé mi contraseña”."
-              : "Aún no hay código. Genera uno y guárdalo: sirve para restablecer cualquier cuenta del equipo."}
+              ? "Ya tienes un código personal. Si lo perdiste, genera otro: el anterior deja de servir solo para tu cuenta."
+              : "Genera tu código y guárdalo. Sirve para restablecer tu contraseña con tu email, no la de otra persona."}
           </p>
           {recoveryCode ? <p className="recovery-code">{recoveryCode}</p> : null}
           <div className="form-actions" style={{ marginTop: 12 }}>

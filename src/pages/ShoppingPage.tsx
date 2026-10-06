@@ -403,6 +403,7 @@ export function ShoppingPage() {
                     <input
                       type="checkbox"
                       checked={item.purchased}
+                      disabled={!canBuy}
                       onChange={(e) => void toggleItem(item.id, e.target.checked)}
                     />
                     <span>

@@ -13,18 +13,19 @@ import {
   destroyUserSessions,
   findUserByEmail,
   getSessionUser,
+  anyUserHasRecovery,
   hasNonDemoUsers,
-  hasRecoveryCode,
   hasTeamUsers,
   isDemoLoginEnabled,
+  issueUserRecovery,
   loginDemo,
   normalizeEmail,
   publicUser,
-  replaceRecoveryCode,
   setUserPassword,
   setUserRole,
+  userHasRecovery,
   validateNewPassword,
-  verifyRecoveryCode,
+  verifyUserRecovery,
 } from "./_shared/auth";
 import { canManageUsers, isTeamRole } from "../../shared/roles";
 import { error, json, readJson } from "./_shared/http";
@@ -39,7 +40,7 @@ export default async (req: Request, _context: Context) => {
     return json({
       configured,
       user,
-      hasRecovery: await hasRecoveryCode(),
+      hasRecovery: user ? await userHasRecovery(user.id) : await anyUserHasRecovery(),
       demoAvailable: isDemoLoginEnabled() && !(await hasNonDemoUsers()),
     });
   }
@@ -64,7 +65,7 @@ export default async (req: Request, _context: Context) => {
     if (pwdErr) return error(pwdErr);
     const user = await createTeamUser({ name, email, password });
     const session = await createSession(user.id);
-    const recoveryCode = await replaceRecoveryCode();
+    const recoveryCode = await issueUserRecovery(user.id);
     return json({ user, token: session.token, recoveryCode }, 201);
   }
 
@@ -79,7 +80,9 @@ export default async (req: Request, _context: Context) => {
   }
 
   if (req.method === "POST" && action === "demo") {
-    if (!isDemoLoginEnabled()) return error("El acceso de prueba está desactivado", 403);
+    if (!isDemoLoginEnabled() || (await hasNonDemoUsers())) {
+      return error("El acceso de prueba está desactivado", 403);
+    }
     const demo = await loginDemo();
     return json(demo);
   }
@@ -127,13 +130,17 @@ export default async (req: Request, _context: Context) => {
     const ok = await authenticate(user.email, current);
     if (!ok) return error("La contraseña actual no es correcta", 401);
     await setUserPassword(user.id, next);
-    return json({ ok: true });
+    await destroyUserSessions(user.id);
+    const session = await createSession(user.id);
+    return json({ ok: true, token: session.token });
   }
 
   if (req.method === "POST" && action === "recovery-code") {
     const denied = await denyIfUnauthorized(req);
     if (denied) return denied;
-    const recoveryCode = await replaceRecoveryCode();
+    const user = await getSessionUser(req);
+    if (!user) return error("Inicia sesión para continuar", 401);
+    const recoveryCode = await issueUserRecovery(user.id);
     return json({ recoveryCode });
   }
 
@@ -145,7 +152,7 @@ export default async (req: Request, _context: Context) => {
     const pwdErr = validateNewPassword(password);
     if (pwdErr) return error(pwdErr);
     const row = await findUserByEmail(email);
-    const codeOk = await verifyRecoveryCode(code);
+    const codeOk = row ? await verifyUserRecovery(row, code) : false;
     if (!row || !codeOk) return error("Email o código incorrectos", 401);
     await setUserPassword(row.id, password);
     await destroyUserSessions(row.id);
@@ -154,7 +161,7 @@ export default async (req: Request, _context: Context) => {
   }
 
   if ((req.method === "PUT" || req.method === "PATCH") && action === "reset-password") {
-    const denied = await denyIfUnauthorized(req);
+    const denied = await denyIfCannot(req, canManageUsers);
     if (denied) return denied;
     const actor = await getSessionUser(req);
     if (!actor) return error("Inicia sesión para continuar", 401);

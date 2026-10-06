@@ -21,7 +21,16 @@ import {
   type EventStaff,
   type PackingItem,
 } from "../shared/ops";
-import { normalizeRole, type TeamRole } from "../shared/roles";
+import {
+  canDeleteCatalog,
+  canEditClients,
+  canEditPrices,
+  canEditQuotes,
+  canManageUsers,
+  normalizeRole,
+  type TeamRole,
+} from "../shared/roles";
+import { isQuoteOfferOpen, resolveValidUntil } from "../shared/quoteOffer";
 import { DEMO_USER_EMAIL, DEMO_USER_NAME, parseDemoLoginFlag } from "../shared/demoLogin";
 import {
   quoteTotal,
@@ -111,6 +120,7 @@ type Store = {
     parentQuoteId: number | null;
     publicToken: string | null;
     dueDate: string | null;
+    validUntil: string | null;
     lastContactedAt: string | null;
     createdAt: string;
     updatedAt: string;
@@ -129,6 +139,8 @@ type Store = {
     passwordSalt: string;
     passwordHash: string;
     role: TeamRole;
+    recoverySalt?: string | null;
+    recoveryHash?: string | null;
     createdAt: string;
     updatedAt: string;
   }>;
@@ -273,6 +285,7 @@ function normalizeStoredQuote(q: Store["quotes"][number]): Store["quotes"][numbe
     parentQuoteId: q.parentQuoteId ?? null,
     publicToken: q.publicToken || randomToken().slice(0, 32),
     dueDate: q.dueDate ?? null,
+    validUntil: q.validUntil ?? null,
     lastContactedAt: q.lastContactedAt ?? null,
   };
 }
@@ -287,6 +300,7 @@ function withSupplierName(
   return {
     ...row,
     stockQty: row.stockQty ?? 0,
+    minStock: row.minStock ?? 0,
     supplierName: supplier?.name ?? null,
   };
 }
@@ -357,6 +371,7 @@ function quoteSummary(store: Store, q: Store["quotes"][number]): QuoteSummary {
     parentQuoteId: q.parentQuoteId ?? null,
     publicToken: q.publicToken ?? null,
     dueDate: q.dueDate ?? null,
+    validUntil: q.validUntil ?? null,
     lastContactedAt: q.lastContactedAt ?? null,
   };
 }
@@ -432,10 +447,23 @@ async function createLocalSession(store: Store, userId: number): Promise<string>
   return token;
 }
 
-async function issueLocalRecovery(store: Store): Promise<string> {
+async function assertCan(store: Store, allowed: (role: TeamRole) => boolean): Promise<AuthUser | null> {
+  if (store.teamUsers.length === 0) return null;
+  const user = await localSessionUser(store);
+  if (!user) fail("Inicia sesión para continuar");
+  if (!allowed(user.role)) fail("No tienes permiso para esta acción");
+  return user;
+}
+
+async function issueLocalRecovery(store: Store, userId: number): Promise<string> {
   const code = randomRecoveryCode();
   const hashed = await hashPassword(normalizeRecoveryCode(code));
-  store.teamRecovery = { salt: hashed.salt, hash: hashed.hash, createdAt: nowIso() };
+  const user = store.teamUsers.find((row) => row.id === userId);
+  if (!user) fail("Usuario no encontrado");
+  user.recoverySalt = hashed.salt;
+  user.recoveryHash = hashed.hash;
+  user.updatedAt = nowIso();
+  store.teamRecovery = null;
   return code;
 }
 
@@ -619,8 +647,9 @@ export const local = {
   getClient(id: number) {
     return read().clients.find((c) => c.id === id) ?? fail("Cliente no encontrado");
   },
-  createClient(body: ClientInput) {
+  async createClient(body: ClientInput) {
     const store = read();
+    await assertCan(store, canEditClients);
     const row: Client = {
       id: nextId(store, "clients"),
       name: body.name,
@@ -635,8 +664,9 @@ export const local = {
     write(store);
     return row;
   },
-  updateClient(id: number, body: ClientInput) {
+  async updateClient(id: number, body: ClientInput) {
     const store = read();
+    await assertCan(store, canEditClients);
     const idx = store.clients.findIndex((c) => c.id === id);
     if (idx < 0) fail("Cliente no encontrado");
     store.clients[idx] = {
@@ -651,8 +681,9 @@ export const local = {
     write(store);
     return store.clients[idx];
   },
-  deleteClient(id: number) {
+  async deleteClient(id: number) {
     const store = read();
+    await assertCan(store, canDeleteCatalog);
     if (store.events.some((e) => e.clientId === id)) {
       fail("No se puede eliminar: el cliente tiene eventos");
     }
@@ -663,8 +694,9 @@ export const local = {
 
   listSuppliers: () =>
     read().suppliers.slice().sort((a, b) => a.name.localeCompare(b.name, "es")),
-  createSupplier(body: SupplierInput) {
+  async createSupplier(body: SupplierInput) {
     const store = read();
+    await assertCan(store, canEditClients);
     const row: Supplier = {
       id: nextId(store, "suppliers"),
       name: body.name,
@@ -679,8 +711,9 @@ export const local = {
     write(store);
     return row;
   },
-  updateSupplier(id: number, body: SupplierInput) {
+  async updateSupplier(id: number, body: SupplierInput) {
     const store = read();
+    await assertCan(store, canEditClients);
     const idx = store.suppliers.findIndex((s) => s.id === id);
     if (idx < 0) fail("Proveedor no encontrado");
     store.suppliers[idx] = {
@@ -695,8 +728,9 @@ export const local = {
     write(store);
     return store.suppliers[idx];
   },
-  deleteSupplier(id: number) {
+  async deleteSupplier(id: number) {
     const store = read();
+    await assertCan(store, canDeleteCatalog);
     store.suppliers = store.suppliers.filter((s) => s.id !== id);
     store.ingredients = store.ingredients.map((i) =>
       i.supplierId === id ? { ...i, supplierId: null } : i,
@@ -716,8 +750,9 @@ export const local = {
       }))
       .sort((a, b) => a.name.localeCompare(b.name, "es"));
   },
-  createIngredient(body: IngredientInput) {
+  async createIngredient(body: IngredientInput) {
     const store = read();
+    await assertCan(store, canEditPrices);
     const row = {
       id: nextId(store, "ingredients"),
       name: body.name,
@@ -725,6 +760,7 @@ export const local = {
       supplierId: body.supplierId ?? null,
       unitPrice: body.unitPrice ?? null,
       stockQty: 0,
+      minStock: Math.max(0, body.minStock ?? 0),
       createdAt: nowIso(),
       updatedAt: nowIso(),
     };
@@ -745,8 +781,9 @@ export const local = {
     write(store);
     return withSupplierName(store, row);
   },
-  updateIngredient(id: number, body: IngredientInput) {
+  async updateIngredient(id: number, body: IngredientInput) {
     const store = read();
+    await assertCan(store, canEditPrices);
     const idx = store.ingredients.findIndex((i) => i.id === id);
     if (idx < 0) fail("Ingrediente no encontrado");
     const prev = store.ingredients[idx];
@@ -759,6 +796,7 @@ export const local = {
       supplierId: body.supplierId ?? null,
       unitPrice: body.unitPrice ?? null,
       stockQty: desiredStock,
+      minStock: Math.max(0, body.minStock ?? prev.minStock ?? 0),
       updatedAt: nowIso(),
     };
     if (stockDelta !== 0) {
@@ -780,8 +818,9 @@ export const local = {
         .map((p) => ({ id: p.id, unitPrice: p.unitPrice, recordedAt: p.recordedAt })),
     };
   },
-  deleteIngredient(id: number) {
+  async deleteIngredient(id: number) {
     const store = read();
+    await assertCan(store, canDeleteCatalog);
     if (store.recipes.some((r) => r.ingredients.some((i) => i.ingredientId === id))) {
       fail("No se puede eliminar: el ingrediente está en uso en recetas o listas");
     }
@@ -794,8 +833,9 @@ export const local = {
   getRecipe(id: number) {
     return read().recipes.find((r) => r.id === id) ?? fail("Receta no encontrada");
   },
-  createRecipe(body: RecipeInput) {
+  async createRecipe(body: RecipeInput) {
     const store = read();
+    await assertCan(store, canEditPrices);
     const id = nextId(store, "recipes");
     const ingredients = body.ingredients.map((ing, i) => {
       const cat = store.ingredients.find((x) => x.id === ing.ingredientId);
@@ -829,8 +869,9 @@ export const local = {
     write(store);
     return row;
   },
-  updateRecipe(id: number, body: RecipeInput) {
+  async updateRecipe(id: number, body: RecipeInput) {
     const store = read();
+    await assertCan(store, canEditPrices);
     const idx = store.recipes.findIndex((r) => r.id === id);
     if (idx < 0) fail("Receta no encontrada");
     const ingredients = body.ingredients.map((ing, i) => {
@@ -859,8 +900,9 @@ export const local = {
     write(store);
     return store.recipes[idx];
   },
-  deleteRecipe(id: number) {
+  async deleteRecipe(id: number) {
     const store = read();
+    await assertCan(store, canDeleteCatalog);
     if (store.events.some((e) => e.recipes.some((r) => r.recipeId === id))) {
       fail("No se puede eliminar: la receta está en uso en eventos");
     }
@@ -1023,11 +1065,12 @@ export const local = {
     return list;
   },
 
-  updateShoppingList(
+  async updateShoppingList(
     eventId: number,
     body: { items?: Array<{ id: number; purchased: boolean }>; status?: ShoppingListStatus },
   ) {
     const store = read();
+    await assertCan(store, canEditPrices);
     const idx = store.shoppingLists.findIndex((l) => l.eventId === eventId);
     if (idx < 0) fail("No hay lista de compras. Genérala primero.");
     const list = store.shoppingLists[idx];
@@ -1079,8 +1122,9 @@ export const local = {
     if (!q) fail("Cotización no encontrada");
     return quoteDetail(store, q);
   },
-  createQuote(body: QuoteInput) {
+  async createQuote(body: QuoteInput) {
     const store = read();
+    await assertCan(store, canEditQuotes);
     if (!store.events.some((e) => e.id === body.eventId)) {
       fail("Debes vincular la cotización a un evento");
     }
@@ -1100,6 +1144,7 @@ export const local = {
       parentQuoteId: null,
       publicToken: randomToken().slice(0, 32),
       dueDate: body.dueDate ?? store.events.find((e) => e.id === body.eventId)?.eventDate ?? null,
+      validUntil: resolveValidUntil(body.validUntil, new Date(body.quoteDate ?? Date.now())).toISOString(),
       lastContactedAt: null,
       createdAt: nowIso(),
       updatedAt: nowIso(),
@@ -1111,8 +1156,9 @@ export const local = {
     write(store);
     return quoteDetail(store, row);
   },
-  updateQuote(id: number, body: QuoteInput) {
+  async updateQuote(id: number, body: QuoteInput) {
     const store = read();
+    await assertCan(store, canEditQuotes);
     const idx = store.quotes.findIndex((q) => q.id === id);
     if (idx < 0) fail("Cotización no encontrada");
     store.quotes[idx] = {
@@ -1128,6 +1174,12 @@ export const local = {
       payments: paymentsForBody(store, body),
       depositAmount: 0,
       dueDate: body.dueDate !== undefined ? body.dueDate : store.quotes[idx].dueDate,
+      validUntil:
+        body.validUntil !== undefined
+          ? body.validUntil
+            ? resolveValidUntil(body.validUntil, new Date(body.quoteDate ?? store.quotes[idx].quoteDate)).toISOString()
+            : null
+          : store.quotes[idx].validUntil,
       lastContactedAt:
         body.lastContactedAt !== undefined ? body.lastContactedAt : store.quotes[idx].lastContactedAt,
       updatedAt: nowIso(),
@@ -1137,14 +1189,16 @@ export const local = {
     write(store);
     return quoteDetail(store, store.quotes[idx]);
   },
-  deleteQuote(id: number) {
+  async deleteQuote(id: number) {
     const store = read();
+    await assertCan(store, canEditQuotes);
     store.quotes = store.quotes.filter((q) => q.id !== id);
     write(store);
     return { ok: true };
   },
-  duplicateQuote(id: number) {
+  async duplicateQuote(id: number) {
     const store = read();
+    await assertCan(store, canEditQuotes);
     const source = store.quotes.find((q) => q.id === id);
     if (!source) fail("Cotización no encontrada");
     const nextVersion =
@@ -1160,6 +1214,7 @@ export const local = {
       version: nextVersion,
       parentQuoteId: source.id,
       publicToken: randomToken().slice(0, 32),
+      validUntil: resolveValidUntil(null, new Date()).toISOString(),
       lastContactedAt: null,
       createdAt: nowIso(),
       updatedAt: nowIso(),
@@ -1188,20 +1243,24 @@ export const local = {
       attendees: detail.attendees,
       clientName: detail.clientName,
       clientCompany: detail.clientCompany,
+      validUntil: detail.validUntil,
     };
   },
   respondPublicQuote(token: string, action: "accept" | "reject") {
     const store = read();
     const idx = store.quotes.findIndex((x) => x.publicToken === token);
     if (idx < 0) fail("Cotización no encontrada");
+    if (!isQuoteOfferOpen(store.quotes[idx].validUntil)) fail("Esta cotización ya no está vigente");
     const status = action === "accept" ? "aceptada" : "rechazada";
     store.quotes[idx] = { ...store.quotes[idx], status, updatedAt: nowIso() };
     if (status === "aceptada") syncEventStatusFromQuote(store, store.quotes[idx].eventId, status);
     write(store);
     return local.getPublicQuote(token);
   },
-  updateUserRole(id: number, role: TeamRole) {
+  async updateUserRole(id: number, role: TeamRole) {
     const store = read();
+    const me = await assertCan(store, canManageUsers);
+    if (me && me.id === id) fail("No puedes cambiar tu propio rol");
     const idx = store.teamUsers.findIndex((u) => u.id === id);
     if (idx < 0) fail("Usuario no encontrado");
     store.teamUsers[idx] = { ...store.teamUsers[idx], role: normalizeRole(role), updatedAt: nowIso() };
@@ -1213,7 +1272,16 @@ export const local = {
     const store = read();
     const configured = store.teamUsers.length > 0;
     const user = configured ? await localSessionUser(store) : null;
-    return { configured, user, hasRecovery: Boolean(store.teamRecovery), demoAvailable: localDemoEnabled() && !store.teamUsers.some((u) => u.email !== DEMO_USER_EMAIL) };
+    const mine = user ? store.teamUsers.find((row) => row.id === user.id) : null;
+    const hasRecovery = mine
+      ? Boolean(mine.recoveryHash)
+      : store.teamUsers.some((row) => row.recoveryHash);
+    return {
+      configured,
+      user,
+      hasRecovery,
+      demoAvailable: localDemoEnabled() && !store.teamUsers.some((u) => u.email !== DEMO_USER_EMAIL),
+    };
   },
 
   async authSetup(body: { name: string; email: string; password: string }) {
@@ -1232,12 +1300,14 @@ export const local = {
       passwordSalt: hashed.salt,
       passwordHash: hashed.hash,
       role: "admin" as const,
+      recoverySalt: null,
+      recoveryHash: null,
       createdAt: nowIso(),
       updatedAt: nowIso(),
     };
     store.teamUsers.push(row);
     const token = await createLocalSession(store, row.id);
-    const recoveryCode = await issueLocalRecovery(store);
+    const recoveryCode = await issueLocalRecovery(store, row.id);
     write(store);
     return { user: toPublicUser(row), token, recoveryCode };
   },
@@ -1257,6 +1327,9 @@ export const local = {
   async authDemoLogin() {
     if (!localDemoEnabled()) fail("El acceso de prueba está desactivado");
     const store = read();
+    if (store.teamUsers.some((u) => u.email !== DEMO_USER_EMAIL)) {
+      fail("El acceso de prueba está desactivado");
+    }
     let row = store.teamUsers.find((u) => u.email === DEMO_USER_EMAIL);
     if (!row) {
       const hashed = await hashPassword(randomToken());
@@ -1267,6 +1340,8 @@ export const local = {
         passwordSalt: hashed.salt,
         passwordHash: hashed.hash,
         role: "admin" as const,
+        recoverySalt: null,
+        recoveryHash: null,
         createdAt: nowIso(),
         updatedAt: nowIso(),
       };
@@ -1294,9 +1369,7 @@ export const local = {
 
   async authAddUser(body: { name: string; email: string; password: string }) {
     const store = read();
-    if (!(await localSessionUser(store)) && store.teamUsers.length > 0) {
-      fail("Inicia sesión para continuar");
-    }
+    if (store.teamUsers.length > 0) await assertCan(store, canManageUsers);
     const name = body.name.trim();
     const email = normalizeEmail(body.email);
     if (!name) fail("El nombre es obligatorio");
@@ -1311,6 +1384,8 @@ export const local = {
       passwordSalt: hashed.salt,
       passwordHash: hashed.hash,
       role: "admin" as const,
+      recoverySalt: null,
+      recoveryHash: null,
       createdAt: nowIso(),
       updatedAt: nowIso(),
     };
@@ -1333,13 +1408,15 @@ export const local = {
     row.passwordSalt = hashed.salt;
     row.passwordHash = hashed.hash;
     row.updatedAt = nowIso();
+    store.teamSessions = store.teamSessions.filter((s) => s.userId !== user.id);
+    const token = await createLocalSession(store, user.id);
     write(store);
-    return { ok: true };
+    return { ok: true, token };
   },
 
   async authDeleteUser(id: number) {
     const store = read();
-    const me = await localSessionUser(store);
+    const me = await assertCan(store, canManageUsers);
     if (!me) fail("Inicia sesión para continuar");
     if (id === me.id) fail("No puedes quitarte a ti mismo");
     if (store.teamUsers.length <= 1) fail("Debe quedar al menos una persona con acceso");
@@ -1352,7 +1429,7 @@ export const local = {
 
   async authResetUserPassword(body: { userId: number; password: string }) {
     const store = read();
-    const me = await localSessionUser(store);
+    const me = await assertCan(store, canManageUsers);
     if (!me) fail("Inicia sesión para continuar");
     if (body.userId === me.id) fail("Para tu contraseña usa Cambiar mi contraseña");
     if (body.password.length < 8) fail("La contraseña debe tener al menos 8 caracteres");
@@ -1369,10 +1446,10 @@ export const local = {
 
   async authIssueRecoveryCode() {
     const store = read();
-    if (store.teamUsers.length > 0 && !(await localSessionUser(store))) {
-      fail("Inicia sesión para continuar");
-    }
-    const recoveryCode = await issueLocalRecovery(store);
+    const me = await localSessionUser(store);
+    if (store.teamUsers.length > 0 && !me) fail("Inicia sesión para continuar");
+    if (!me) fail("Inicia sesión para continuar");
+    const recoveryCode = await issueLocalRecovery(store, me.id);
     write(store);
     return { recoveryCode };
   },
@@ -1381,10 +1458,10 @@ export const local = {
     const store = read();
     const email = normalizeEmail(body.email);
     const row = store.teamUsers.find((u) => u.email === email);
-    const recovery = store.teamRecovery;
     const codeOk =
-      recovery &&
-      (await verifyPassword(normalizeRecoveryCode(body.code), recovery.salt, recovery.hash));
+      row?.recoverySalt &&
+      row.recoveryHash &&
+      (await verifyPassword(normalizeRecoveryCode(body.code), row.recoverySalt, row.recoveryHash));
     if (!row || !codeOk) fail("Email o código incorrectos");
     if (body.password.length < 8) fail("La contraseña debe tener al menos 8 caracteres");
     const hashed = await hashPassword(body.password);
@@ -1437,8 +1514,9 @@ export const local = {
       .map((order) => toPurchaseOrder(store, order));
   },
 
-  createPurchaseOrders(eventId: number): PurchaseOrder[] {
+  async createPurchaseOrders(eventId: number): Promise<PurchaseOrder[]> {
     const store = read();
+    await assertCan(store, canEditPrices);
     if (store.purchaseOrders.some((order) => order.eventId === eventId && isOpenPurchaseStatus(order.status))) {
       fail("Ya hay una orden abierta para este evento. Recíbela o cancélala antes de crear otra.");
     }
@@ -1490,15 +1568,16 @@ export const local = {
     return created.map((order) => toPurchaseOrder(store, order));
   },
 
-  receivePurchaseOrder(
+  async receivePurchaseOrder(
     id: number,
     body: {
       invoiceNumber?: string | null;
       invoiceTotal?: number | null;
       items: Array<{ id: number; receivedQty: number }>;
     },
-  ): PurchaseOrder {
+  ): Promise<PurchaseOrder> {
     const store = read();
+    await assertCan(store, canEditPrices);
     const order = store.purchaseOrders.find((row) => row.id === id);
     if (!order) fail("Orden no encontrada");
     if (order.status === "cancelada") fail("La orden está cancelada");
@@ -1547,8 +1626,9 @@ export const local = {
     return toPurchaseOrder(store, order);
   },
 
-  cancelPurchaseOrder(id: number): PurchaseOrder {
+  async cancelPurchaseOrder(id: number): Promise<PurchaseOrder> {
     const store = read();
+    await assertCan(store, canEditPrices);
     const order = store.purchaseOrders.find((row) => row.id === id);
     if (!order) fail("Orden no encontrada");
     if (order.items.some((item) => item.receivedQty > 0)) {
