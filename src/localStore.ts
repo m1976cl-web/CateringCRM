@@ -31,6 +31,7 @@ import {
   type TeamRole,
 } from "../shared/roles";
 import { isQuoteOfferOpen, resolveValidUntil } from "../shared/quoteOffer";
+import { isQuoteSuperseded } from "../shared/quoteHistory";
 import { DEMO_USER_EMAIL, DEMO_USER_NAME, parseDemoLoginFlag } from "../shared/demoLogin";
 import {
   quoteTotal,
@@ -1228,6 +1229,15 @@ export const local = {
     const q = store.quotes.find((x) => x.publicToken === token.trim());
     if (!q) fail("Cotización no encontrada");
     const detail = quoteDetail(store, q);
+    const history = store.quotes
+      .filter((row) => row.eventId === q.eventId)
+      .sort((a, b) => a.version - b.version)
+      .map((row) => ({
+        version: row.version,
+        quoteDate: row.quoteDate,
+        total: row.total,
+        status: row.status,
+      }));
     return {
       id: detail.id,
       quoteNumber: detail.quoteNumber,
@@ -1244,13 +1254,26 @@ export const local = {
       clientName: detail.clientName,
       clientCompany: detail.clientCompany,
       validUntil: detail.validUntil,
+      superseded: isQuoteSuperseded(
+        detail.version,
+        history.map((item) => item.version),
+      ),
+      history,
     };
   },
   respondPublicQuote(token: string, action: "accept" | "reject") {
     const store = read();
     const idx = store.quotes.findIndex((x) => x.publicToken === token);
     if (idx < 0) fail("Cotización no encontrada");
-    if (!isQuoteOfferOpen(store.quotes[idx].validUntil)) fail("Esta cotización ya no está vigente");
+    const current = store.quotes[idx];
+    if (current.status === "aceptada" || current.status === "rechazada") {
+      fail("Esta cotización ya fue respondida");
+    }
+    const versions = store.quotes.filter((row) => row.eventId === current.eventId).map((row) => row.version);
+    if (isQuoteSuperseded(current.version, versions)) {
+      fail("Esta versión fue reemplazada. Pide el enlace de la más nueva.");
+    }
+    if (!isQuoteOfferOpen(current.validUntil)) fail("Esta cotización ya no está vigente");
     const status = action === "accept" ? "aceptada" : "rechazada";
     store.quotes[idx] = { ...store.quotes[idx], status, updatedAt: nowIso() };
     if (status === "aceptada") syncEventStatusFromQuote(store, store.quotes[idx].eventId, status);

@@ -1,7 +1,8 @@
 import type { Config, Context } from "@netlify/functions";
-import { eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { db } from "../../db";
 import { clients, events, quotes } from "../../db/schema";
+import { isQuoteSuperseded } from "../../shared/quoteHistory";
 import { isQuoteOfferOpen } from "../../shared/quoteOffer";
 import { error, json } from "./_shared/http";
 import { syncEventFromQuote } from "./_shared/quoteLifecycle";
@@ -10,6 +11,7 @@ async function loadPublic(token: string) {
   const [row] = await db
     .select({
       id: quotes.id,
+      eventId: quotes.eventId,
       quoteNumber: quotes.quoteNumber,
       quoteDate: quotes.quoteDate,
       items: quotes.items,
@@ -30,7 +32,39 @@ async function loadPublic(token: string) {
     .innerJoin(clients, eq(events.clientId, clients.id))
     .where(eq(quotes.publicToken, token))
     .limit(1);
-  return row ?? null;
+  if (!row) return null;
+  const history = await db
+    .select({
+      version: quotes.version,
+      quoteDate: quotes.quoteDate,
+      total: quotes.total,
+      status: quotes.status,
+    })
+    .from(quotes)
+    .where(eq(quotes.eventId, row.eventId))
+    .orderBy(asc(quotes.version));
+  return {
+    id: row.id,
+    quoteNumber: row.quoteNumber,
+    quoteDate: row.quoteDate,
+    items: row.items,
+    total: row.total,
+    notes: row.notes,
+    status: row.status,
+    version: row.version,
+    validUntil: row.validUntil,
+    eventTitle: row.eventTitle,
+    eventDate: row.eventDate,
+    location: row.location,
+    attendees: row.attendees,
+    clientName: row.clientName,
+    clientCompany: row.clientCompany,
+    superseded: isQuoteSuperseded(
+      row.version,
+      history.map((item) => item.version),
+    ),
+    history,
+  };
 }
 
 export default async (req: Request, context: Context) => {
@@ -46,11 +80,27 @@ export default async (req: Request, context: Context) => {
   if (req.method === "POST") {
     const body = (await req.json().catch(() => ({}))) as { action?: string };
     const [current] = await db
-      .select({ id: quotes.id, eventId: quotes.eventId, validUntil: quotes.validUntil })
+      .select({
+        id: quotes.id,
+        eventId: quotes.eventId,
+        validUntil: quotes.validUntil,
+        version: quotes.version,
+        status: quotes.status,
+      })
       .from(quotes)
       .where(eq(quotes.publicToken, token))
       .limit(1);
     if (!current) return error("Cotización no encontrada", 404);
+    if (current.status === "aceptada" || current.status === "rechazada") {
+      return error("Esta cotización ya fue respondida", 409);
+    }
+    const newer = await db
+      .select({ version: quotes.version })
+      .from(quotes)
+      .where(eq(quotes.eventId, current.eventId));
+    if (isQuoteSuperseded(current.version, newer.map((item) => item.version))) {
+      return error("Esta versión fue reemplazada. Pide el enlace de la más nueva.", 409);
+    }
     if (!isQuoteOfferOpen(current.validUntil)) {
       return error("Esta cotización ya no está vigente", 410);
     }
