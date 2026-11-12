@@ -101,22 +101,43 @@ Si no configuras esos secrets, Pages sigue en modo estático local.
 
 ## GitHub Pages (modo estático)
 
-El sitio público es [https://m1976cl-web.github.io/CateringCRM/](https://m1976cl-web.github.io/CateringCRM/). Pages está en **Deploy from a branch** (`main` /), así que la SPA compilada vive en `/app/` y la raíz redirige ahí. El botón **Probar sin contraseña** está en esa pantalla de login.
+El sitio público es [https://m1976cl-web.github.io/CateringCRM/](https://m1976cl-web.github.io/CateringCRM/). Esa URL redirige a `/app/`, donde vive la SPA. Los enlaces ya guardados (`/CateringCRM/app/…`) y el scope de la PWA siguen ahí. El botón **Probar sin contraseña** está en la pantalla de login.
 
-El workflow [`.github/workflows/deploy-pages.yml`](./.github/workflows/deploy-pages.yml) genera el build con:
+El workflow [`.github/workflows/deploy-pages.yml`](./.github/workflows/deploy-pages.yml) compila y publica un artifact con `actions/upload-pages-artifact` y `actions/deploy-pages`. No vuelve a commitear `app/` en `main` (se acaban los commits `chore: update GitHub Pages static app`).
 
-- `VITE_STATIC_ONLY=true` — sin Netlify plugin
-- `VITE_BASE=./` — assets relativos (sirve en `/` o en `/app/`)
-- `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` — pasados desde secrets si existen
+Variables del build de Pages:
+
+- `VITE_STATIC_ONLY=true` — sin plugin de Netlify
+- `VITE_BASE=/CateringCRM/app/` — JS, CSS, manifest y service worker bajo `/app/`
+- `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` — desde secrets, si existen
 - `VITE_DEMO_LOGIN` — opcional; `false` oculta “Probar sin contraseña”
-- `HashRouter` — navegación compatible con Pages
+- `HashRouter` — la ruta va en el hash, compatible con Pages
 
-Si más adelante cambias Pages a Source: **GitHub Actions**, el artifact `dist/` se sirve en la raíz y el redirect deja de hacer falta.
+El artifact queda así:
+
+- `index.html` en la raíz: el mismo redirect del repo (en `*.github.io` manda a `app/`)
+- `app/`: el contenido de `dist/` (la SPA, sin ese redirect)
+
+### Origen de Pages (paso manual, una vez)
+
+En el repo, Pages sigue en **Deploy from a branch** (`main` / `/`). Hay que pasarlo a **GitHub Actions** a mano. El orden importa para no dejar el sitio caído:
+
+1. **Merge primero**, con el origen todavía en *Deploy from a branch*. El sitio lo sigue publicando `pages-build-deployment` desde `main` (`index.html` + la carpeta `app/` que ya está en el repo). El job `deploy` ya no lleva `continue-on-error`. Si falla mientras el origen siga siendo la rama, el fallo no quita esa publicación. Si llega a publicar, el artifact usa el mismo redirect en `/` y la misma SPA en `/app/`.
+2. **Después del merge:** **Settings → Pages → Build and deployment → Source: GitHub Actions**. Si GitHub ofrece una plantilla de workflow, no hace falta crearla: este archivo ya está en el repo.
+3. **Enseguida**, en la pestaña Actions, vuelve a ejecutar **Deploy GitHub Pages** (Re-run failed jobs, o Run workflow). Ese run es el que tiene que quedar como publicación vigente.
+
+No pongas el origen en GitHub Actions **antes** del merge. El workflow que hay hoy en `main` sube `dist/` a la raíz del sitio (`VITE_BASE=./`, redirect quitado del HTML). Un deploy de ese artifact mueve la SPA de `/app/` a `/` y rompe los enlaces guardados y el scope de la PWA.
+
+La carpeta `app/` commiteada no se borra aquí. Mientras el origen sea la rama, es lo que mantiene `/app/` en línea. A partir de este cambio deja de actualizarse. Cuando un deploy de Actions esté sirviendo el sitio, un PR aparte puede borrar `app/` de `main`.
 
 Build local de prueba:
 
+```bash
+VITE_STATIC_ONLY=true VITE_BASE=/CateringCRM/app/ npm run build
+```
+
 ```powershell
-$env:VITE_STATIC_ONLY="true"; $env:VITE_BASE="./"; npm run build
+$env:VITE_STATIC_ONLY="true"; $env:VITE_BASE="/CateringCRM/app/"; npm run build
 ```
 
 ### Instalar en el móvil (PWA)
