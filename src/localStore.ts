@@ -74,7 +74,7 @@ import type {
   Supplier,
 } from "./api";
 import { getSessionToken } from "./session";
-const KEY = "catering-crm:v1";
+export const LOCAL_STORE_KEY = "catering-crm:v1";
 
 type Store = {
   clients: Client[];
@@ -216,7 +216,7 @@ function empty(): Store {
 
 function read(): Store {
   try {
-    const raw = localStorage.getItem(KEY);
+    const raw = localStorage.getItem(LOCAL_STORE_KEY);
     if (!raw) return empty();
     const parsed = { ...empty(), ...(JSON.parse(raw) as Store) } as Store;
     parsed.teamUsers = parsed.teamUsers ?? [];
@@ -256,7 +256,7 @@ function read(): Store {
 }
 
 function write(store: Store): void {
-  localStorage.setItem(KEY, JSON.stringify(store));
+  localStorage.setItem(LOCAL_STORE_KEY, JSON.stringify(store));
 }
 
 function nextId(store: Store, table: string): number {
@@ -610,17 +610,6 @@ export const local = {
 
   clearAll(): { ok: boolean } {
     write(empty());
-    return { ok: true };
-  },
-
-  exportJson(): string {
-    return JSON.stringify(read(), null, 2);
-  },
-
-  importJson(json: string): { ok: boolean } {
-    const data = JSON.parse(json) as Store;
-    if (!data || !Array.isArray(data.clients)) fail("Archivo de respaldo inválido");
-    write({ ...empty(), ...data, seq: data.seq ?? {} });
     return { ok: true };
   },
 

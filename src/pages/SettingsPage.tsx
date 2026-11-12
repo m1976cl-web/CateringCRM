@@ -1,5 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import { api, canClearAllData, getDataMode, getDataModeLabel, type AuthUser } from "../api";
+import {
+  api,
+  canClearAllData,
+  formatDate,
+  getDataMode,
+  getDataModeLabel,
+  localBackupApplies,
+  type AuthUser,
+} from "../api";
+import { describeRestore, readBackupCollections, validateBackup, type BackupCollections } from "../backup";
 import { setSessionToken } from "../session";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { useAuth } from "../components/AuthGate";
@@ -32,6 +41,7 @@ export function SettingsPage() {
   const [removeUser, setRemoveUser] = useState<AuthUser | null>(null);
   const [recoveryCode, setRecoveryCode] = useState<string | null>(null);
   const [hasRecovery, setHasRecovery] = useState(false);
+  const [pendingRestore, setPendingRestore] = useState<{ raw: string; message: string } | null>(null);
   const [cloudUrl, setCloudUrl] = useState(
     () => getRuntimeCloudConfig()?.url || getEnvCloudConfig().url,
   );
@@ -131,7 +141,22 @@ export function SettingsPage() {
     }
   }
 
-  function exportBackup() {
+  function backupAllowed(): boolean {
+    if (!localBackupApplies()) {
+      setError("Este respaldo solo aplica a los datos de este dispositivo.");
+      setMsg("");
+      return false;
+    }
+    if (!canUsers) {
+      setError("Solo administración puede descargar o restaurar el respaldo.");
+      setMsg("");
+      return false;
+    }
+    return true;
+  }
+
+  function downloadBackup() {
+    if (!backupAllowed()) return;
     try {
       const json = api.exportLocalBackup();
       const blob = new Blob([json], { type: "application/json" });
@@ -141,20 +166,57 @@ export function SettingsPage() {
       a.download = `cateringcrm-respaldo-${new Date().toISOString().slice(0, 10)}.json`;
       a.click();
       URL.revokeObjectURL(url);
-      setMsg("Respaldo descargado (copia local de este dispositivo).");
+      setMsg("Respaldo descargado.");
+      setError("");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "No se pudo exportar");
+      setError(e instanceof Error ? e.message : "No se pudo descargar el respaldo");
+      setMsg("");
     }
   }
 
-  async function onImportFile(file: File) {
+  async function onRestoreFile(file: File) {
+    if (!backupAllowed()) return;
     try {
       const text = await file.text();
-      api.importLocalBackup(text);
-      setMsg("Respaldo importado en el almacenamiento local.");
+      const result = validateBackup(text);
+      if (!result.ok) {
+        setPendingRestore(null);
+        setError(result.error);
+        setMsg("");
+        return;
+      }
+      let current: BackupCollections | null = null;
+      try {
+        current = readBackupCollections(localStorage);
+      } catch {
+        current = null;
+      }
       setError("");
+      setMsg("");
+      setPendingRestore({
+        raw: text,
+        message: describeRestore(
+          current,
+          result.backup.collections,
+          formatDate(result.backup.exportedAt),
+        ),
+      });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "No se pudo importar");
+      setPendingRestore(null);
+      setError(e instanceof Error ? e.message : "No se pudo leer el archivo");
+      setMsg("");
+    }
+  }
+
+  function confirmRestore() {
+    if (!pendingRestore || !backupAllowed()) return;
+    try {
+      api.importLocalBackup(pendingRestore.raw);
+      window.location.reload();
+    } catch (e) {
+      setPendingRestore(null);
+      setError(e instanceof Error ? e.message : "No se pudo restaurar");
+      setMsg("");
     }
   }
 
@@ -508,29 +570,37 @@ export function SettingsPage() {
         </form>
 
         <section className="panel">
-          <h2>Respaldo local</h2>
-          <p className="meta">
-            Exporta o importa un JSON del almacenamiento local (útil si no usas nube).
-          </p>
-          <div className="form-actions">
-            <button type="button" className="btn" onClick={exportBackup}>
-              Exportar JSON
-            </button>
-            <button type="button" className="btn" onClick={() => fileRef.current?.click()}>
-              Importar JSON
-            </button>
-            <input
-              ref={fileRef}
-              type="file"
-              accept="application/json,.json"
-              hidden
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) void onImportFile(f);
-                e.target.value = "";
-              }}
-            />
-          </div>
+          <h2>Respaldo</h2>
+          {localBackupApplies(mode) ? (
+            canUsers ? (
+              <>
+                <p className="meta">Archivo JSON con los datos de este dispositivo.</p>
+                <div className="form-actions">
+                  <button type="button" className="btn" onClick={downloadBackup}>
+                    Descargar respaldo
+                  </button>
+                  <button type="button" className="btn" onClick={() => fileRef.current?.click()}>
+                    Restaurar respaldo
+                  </button>
+                  <input
+                    ref={fileRef}
+                    type="file"
+                    accept="application/json,.json"
+                    hidden
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) void onRestoreFile(f);
+                      e.target.value = "";
+                    }}
+                  />
+                </div>
+              </>
+            ) : (
+              <p className="meta">Solo administración puede descargar o restaurar el respaldo.</p>
+            )
+          ) : (
+            <p className="meta">Este respaldo solo aplica a los datos de este dispositivo.</p>
+          )}
           {!canClearAllData() ? (
             <p className="meta" style={{ marginTop: 12 }}>
               En modo servidor, el borrado masivo no está disponible desde la app.
@@ -545,6 +615,14 @@ export function SettingsPage() {
         </section>
       </div>
 
+      <ConfirmDialog
+        open={Boolean(pendingRestore)}
+        title="Restaurar respaldo"
+        message={pendingRestore?.message ?? ""}
+        confirmLabel="Restaurar"
+        onCancel={() => setPendingRestore(null)}
+        onConfirm={confirmRestore}
+      />
       <ConfirmDialog
         open={Boolean(removeUser)}
         title="Quitar del equipo"
