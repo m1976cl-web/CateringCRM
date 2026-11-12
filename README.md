@@ -26,7 +26,7 @@ Pensado para equipos con poco conocimiento técnico: formularios claros, textos 
 
 **Login de equipo.** La primera visita pide crear un email y contraseña. En la misma pantalla hay **Probar sin contraseña**: entra con un usuario de demostración (`demo@cateringcrm.app`) para recorrer la app online sin clave. Después, las Functions de Netlify exigen sesión. En Supabase, RLS y funciones de auth exigen la misma sesión (la anon key no alcanza para leer tablas). En modo local el login cierra la interfaz.
 
-El acceso de prueba está **activo por defecto** y se oculta solo cuando ya existe un usuario real (email distinto de `demo@cateringcrm.app`). Entra a un CRM vacío: no crea clientes, recetas, eventos ni cotizaciones de ejemplo. Quien lo use ve y puede editar los mismos datos del CRM. Para apagarlo del todo: `DEMO_LOGIN=false` en Netlify, o `VITE_DEMO_LOGIN=false` en el build de Pages. En Supabase, ejecuta `007_demo_login.sql` y `008_ops_features.sql`.
+El acceso de prueba está **activo por defecto** y se oculta solo cuando ya existe un usuario real (email distinto de `demo@cateringcrm.app`). Entra a un CRM vacío: no crea clientes, recetas, eventos ni cotizaciones de ejemplo. Quien lo use ve y puede editar los mismos datos del CRM. Para apagarlo del todo: `DEMO_LOGIN=false` en Netlify, o `VITE_DEMO_LOGIN=false` en el build de Pages. En Supabase, ejecuta en orden los archivos de `supabase/migrations/` (el acceso de prueba lo agrega `007_demo_login.sql`).
 
 **Sin autenticación de clientes finales.** El login es para el equipo de catering, no para invitados.
 
@@ -79,7 +79,19 @@ VITE_SUPABASE_ANON_KEY=eyJ...
 
 Nunca ejecutes DDL directo contra la base hosteada: el deploy aplica las migraciones.
 
-Si también usas Supabase, actualiza `supabase/migrations/` para mantener el esquema alineado.
+`npm run db:migrate` (`netlify database migrations apply`) y el deploy aplican `netlify/database/migrations/` en orden lexicográfico del directorio. Archivos presentes:
+
+- `netlify/database/migrations/20260805162710_lucky_mathemanic/migration.sql`
+- `netlify/database/migrations/20260805230000_suitable_services_stock/migration.sql` — Add suitable_services and inventory stock
+- `netlify/database/migrations/20260817220000_quote_deposit/migration.sql`
+- `netlify/database/migrations/20260827120000_payments_auth/migration.sql`
+- `netlify/database/migrations/20260827140000_team_recovery/migration.sql`
+- `netlify/database/migrations/20260902220000_ops_features/migration.sql`
+- `netlify/database/migrations/20261005200000_stock_purchases/migration.sql`
+- `netlify/database/migrations/20261006020000_roles_ops/migration.sql`
+- `netlify/database/migrations/20261006160000_event_consumption/migration.sql`
+
+Si también usas Supabase, actualiza `supabase/migrations/` para mantener el esquema alineado. Los archivos de Supabase se aplican aparte, a mano, en el SQL Editor (lista más abajo).
 
 ## Deploy en Netlify
 
@@ -90,7 +102,21 @@ Si también usas Supabase, actualiza `supabase/migrations/` para mantener el esq
 Sin Supabase, GitHub Pages guarda todo en el `localStorage` de cada teléfono/PC (no se comparte). Para un CRM de equipo, conecta un proyecto gratis de Supabase:
 
 1. Crea un proyecto en [supabase.com](https://supabase.com) (plan free).
-2. Abre **SQL Editor** → New query → ejecuta en orden los archivos de [`supabase/migrations/`](./supabase/migrations/) (`001` … `008`).
+2. Abre **SQL Editor** → New query → ejecuta en orden, un archivo por consulta, los de [`supabase/migrations/`](./supabase/migrations/):
+
+   1. `001_init.sql` — CateringCRM — esquema inicial para Supabase (Postgres)
+   2. `002_suitable_services_stock.sql` — CateringCRM: suitable_services + stock (run in Supabase SQL Editor after 001_init)
+   3. `003_quote_deposit.sql` — Anticipo (CLP) en cotizaciones
+   4. `004_payments_auth.sql` — Abonos por cotización, costo de ingredientes y login de equipo
+   5. `005_team_recovery.sql` — Código de recuperación del equipo (sin email)
+   6. `006_team_rls.sql` — RLS de equipo: las tablas del CRM exigen sesión; auth va por RPC (sin exponer hashes).
+   7. `007_demo_login.sql` — Acceso de prueba sin contraseña (crm_auth_demo).
+   8. `008_ops_features.sql` — Operación diaria: logística, packing, gastos, staff, alergias, versiones, link público, roles, precios.
+   9. `009_stock_purchases.sql` — Bodega por movimientos y órdenes de compra con recepción.
+   10. `010_roles_ops.sql` — Permisos por rol, código de recuperación personal, stock mínimo y vigencia de cotización.
+   11. `011_quote_history.sql` — El enlace público muestra las versiones del evento y no acepta una reemplazada.
+   12. `012_event_consumption.sql`
+
 3. En **Project Settings → API**, copia **Project URL** y **anon public** key.
 4. En la app, **Ajustes → Conectar nube**, pega URL y clave y recarga. (Opcional: secrets de GitHub `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` para que el build ya venga conectado.)
 5. El badge debe decir **Nube (se comparte)**.
