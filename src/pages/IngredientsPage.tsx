@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api, formatDateOnly, formatMoney, type Ingredient, type StockMovement, type Supplier } from "../api";
 import { STOCK_KIND_LABELS, type StockMovementKind } from "../../shared/procurement";
 import { ConfirmDialog } from "../components/ConfirmDialog";
@@ -9,6 +10,8 @@ import { matchesQuery } from "../search";
 import { INGREDIENT_UNITS, type IngredientUnit } from "../../shared/types";
 import { useAuth } from "../components/AuthGate";
 import { canDeleteCatalog, canEditPrices } from "../../shared/roles";
+import { clearFieldValidity, onFieldInvalid, scrollToId } from "../formValidity";
+import { FLOW_COPY, emptyListCopy, isLowStock, stockQtyHint } from "../../shared/flowUsability";
 
 const blank = {
   name: "",
@@ -21,6 +24,8 @@ const blank = {
 
 export function IngredientsPage() {
   const { user } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const editParam = searchParams.get("editar");
   const [rows, setRows] = useState<Ingredient[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [form, setForm] = useState(blank);
@@ -34,18 +39,23 @@ export function IngredientsPage() {
   const [moveKind, setMoveKind] = useState<StockMovementKind>("entrada");
   const [moveQty, setMoveQty] = useState("");
   const [moveNote, setMoveNote] = useState("");
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
 
-  async function load() {
-    setLoading(true);
+  async function load(opts?: { silent?: boolean }) {
+    if (!opts?.silent) setLoading(true);
     try {
       const [i, s] = await Promise.all([api.listIngredients(), api.listSuppliers()]);
       setRows(i);
       setSuppliers(s);
       setError("");
+      return i;
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Error al cargar");
+      setError(e instanceof Error ? e.message : FLOW_COPY.ingredientsLoad);
+      scrollToId("stock-feedback");
+      return undefined;
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   }
 
@@ -65,7 +75,8 @@ export function IngredientsPage() {
     try {
       setMovements(await api.listStockMovements(ingredientId));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "No se pudo cargar la bodega");
+      setError(err instanceof Error ? err.message : FLOW_COPY.movementsLoad);
+      scrollToId("stock-feedback");
     }
   }
 
@@ -80,15 +91,39 @@ export function IngredientsPage() {
       minStock: String(row.minStock ?? 0),
     });
     void loadMovements(row.id);
+    scrollToId("ingrediente-form");
   }
+
+  useEffect(() => {
+    if (!editParam || loading) return;
+    const id = Number(editParam);
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("editar");
+        return next;
+      },
+      { replace: true },
+    );
+    if (!Number.isInteger(id)) return;
+    const row = rowsRef.current.find((item) => item.id === id);
+    if (!row) {
+      setError(FLOW_COPY.ingredientMissing);
+      scrollToId("stock-feedback");
+      return;
+    }
+    startEdit(row);
+  }, [editParam, loading, setSearchParams]);
 
   async function onMovement() {
     if (!editingId) return;
     if (!(Number(moveQty) > 0)) {
-      setError("Indica una cantidad mayor que cero");
+      setError(FLOW_COPY.fieldStockQty);
+      scrollToId("stock-feedback");
       return;
     }
     setSaving(true);
+    setError("");
     try {
       await api.createStockMovement({
         ingredientId: editingId,
@@ -98,11 +133,13 @@ export function IngredientsPage() {
       });
       setMoveQty("");
       setMoveNote("");
-      await Promise.all([load(), loadMovements(editingId)]);
-      const fresh = (await api.listIngredients()).find((row) => row.id === editingId);
+      const freshList = await load({ silent: true });
+      await loadMovements(editingId);
+      const fresh = freshList?.find((row) => row.id === editingId);
       if (fresh) setForm((prev) => ({ ...prev, stockQty: String(fresh.stockQty ?? 0) }));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "No se pudo registrar el movimiento");
+      setError(err instanceof Error ? err.message : FLOW_COPY.movementSave);
+      scrollToId("stock-feedback");
     } finally {
       setSaving(false);
     }
@@ -111,6 +148,7 @@ export function IngredientsPage() {
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
+    setError("");
     try {
       const payload = {
         name: form.name.trim(),
@@ -123,9 +161,10 @@ export function IngredientsPage() {
       if (editingId) await api.updateIngredient(editingId, payload);
       else await api.createIngredient(payload);
       reset();
-      await load();
+      await load({ silent: true });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "No se pudo guardar");
+      setError(err instanceof Error ? err.message : FLOW_COPY.ingredientsSave);
+      scrollToId("stock-feedback");
     } finally {
       setSaving(false);
     }
@@ -139,7 +178,8 @@ export function IngredientsPage() {
       if (editingId === deleteId) reset();
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "No se pudo eliminar");
+      setError(err instanceof Error ? err.message : FLOW_COPY.ingredientsDelete);
+      scrollToId("stock-feedback");
       setDeleteId(null);
     }
   }
@@ -149,28 +189,42 @@ export function IngredientsPage() {
       rows.filter((r) => matchesQuery(query, r.name, r.supplierName, r.unit)),
     [rows, query],
   );
+  const catalogEmpty = emptyListCopy(
+    Boolean(query.trim()),
+    "Sin ingredientes",
+    FLOW_COPY.ingredientsEmpty,
+    FLOW_COPY.ingredientsSearch,
+  );
 
   return (
     <div>
       <PageHeader
         title="Ingredientes"
-        subtitle="Catálogo con unidad, precio y proveedor opcional."
+        subtitle={FLOW_COPY.ingredientsSubtitle}
       />
-      {error ? <div className="error-box">{error}</div> : null}
+      <div id="stock-feedback">{error ? <div className="error-box">{error}</div> : null}</div>
 
       <div className="split">
         <div>
-        <form className="panel form-grid" onSubmit={onSubmit}>
-          <h2>{editingId ? "Editar" : "Nuevo ingrediente"}</h2>
+        <form
+          id="ingrediente-form"
+          className="panel form-grid"
+          onSubmit={onSubmit}
+          onChange={() => setError("")}
+        >
+          <h2>{editingId ? "Editar ingrediente" : "Nuevo ingrediente"}</h2>
+          {!canEditPrices(user.role) ? <p className="meta">{FLOW_COPY.kitchenStock}</p> : null}
           <FormField label="Nombre *">
             <input
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
+              onInput={clearFieldValidity}
+              onInvalid={onFieldInvalid({ valueMissing: FLOW_COPY.fieldIngredientName })}
               required
             />
           </FormField>
           <div className="grid-2">
-            <FormField label="Unidad *">
+            <FormField label="Unidad *" hint={FLOW_COPY.unitHint}>
               <select
                 value={form.unit}
                 onChange={(e) => setForm({ ...form, unit: e.target.value as IngredientUnit })}
@@ -194,10 +248,7 @@ export function IngredientsPage() {
             </FormField>
           </div>
           <div className="grid-2">
-          <FormField
-            label="Stock en bodega"
-            hint="Al guardar un número distinto queda un ajuste. Entradas, mermas y reservas se anotan abajo."
-          >
+          <FormField label="Stock en bodega" hint={stockQtyHint(editingId != null)}>
             <input
               type="number"
               min={0}
@@ -209,7 +260,7 @@ export function IngredientsPage() {
           </FormField>
           <FormField
             label="Mínimo"
-            hint="El inicio avisa cuando el stock llega a este número."
+            hint={FLOW_COPY.minStockHint}
           >
             <input
               type="number"
@@ -256,7 +307,15 @@ export function IngredientsPage() {
           </div>
         </form>
         {editingId ? (
-          <section className="panel form-grid" style={{ marginTop: 16 }}>
+          <form
+            className="panel form-grid"
+            style={{ marginTop: 16 }}
+            onSubmit={(e) => {
+              e.preventDefault();
+              void onMovement();
+            }}
+            onChange={() => setError("")}
+          >
               <h3 style={{ marginBottom: 0 }}>Movimiento de bodega</h3>
               <div className="grid-2">
                 <FormField label="Tipo">
@@ -276,6 +335,11 @@ export function IngredientsPage() {
                     step="0.001"
                     value={moveQty}
                     onChange={(e) => setMoveQty(e.target.value)}
+                    onInput={clearFieldValidity}
+                    onInvalid={onFieldInvalid({
+                      valueMissing: FLOW_COPY.fieldStockQty,
+                      rangeUnderflow: FLOW_COPY.fieldStockQty,
+                    })}
                     required
                   />
                 </FormField>
@@ -283,7 +347,7 @@ export function IngredientsPage() {
               <FormField label="Nota">
                 <input value={moveNote} onChange={(e) => setMoveNote(e.target.value)} />
               </FormField>
-              <button className="btn" type="button" disabled={saving} onClick={() => void onMovement()}>
+              <button className="btn" type="submit" disabled={saving}>
                 Registrar movimiento
               </button>
               {movements.length ? (
@@ -299,7 +363,7 @@ export function IngredientsPage() {
               ) : (
                 <p className="meta">Todavía no hay movimientos de este ingrediente.</p>
               )}
-          </section>
+          </form>
         ) : null}
         </div>
 
@@ -313,7 +377,7 @@ export function IngredientsPage() {
           {loading ? (
             <div className="loading">Cargando…</div>
           ) : visible.length === 0 ? (
-            <EmptyState title="Sin ingredientes" description="Agrega harina, leche, frutas…" />
+            <EmptyState title={catalogEmpty.title} description={catalogEmpty.description} />
           ) : (
             <div className="table-wrap" style={{ marginTop: 12 }}>
               <table className="data">
@@ -330,15 +394,23 @@ export function IngredientsPage() {
                 <tbody>
                   {visible.map((row) => (
                     <tr key={row.id}>
-                      <td>{row.name}</td>
+                      <td>
+                        <button type="button" className="linkish" onClick={() => startEdit(row)}>
+                          {row.name}
+                        </button>
+                      </td>
                       <td>{row.unit}</td>
                       <td>{row.supplierName ?? "—"}</td>
                       <td>{formatMoney(row.unitPrice)}</td>
                       <td>
                         {row.stockQty ?? 0} {row.unit}
-                        {(row.minStock ?? 0) > 0 && (row.stockQty ?? 0) <= (row.minStock ?? 0) ? (
-                          <span className="badge tone-warn" style={{ marginLeft: 8 }}>
-                            mínimo {row.minStock}
+                        {isLowStock(row.stockQty ?? 0, row.minStock ?? 0) ? (
+                          <span
+                            className="badge tone-warn"
+                            style={{ marginLeft: 8 }}
+                            title={`Mínimo configurado: ${row.minStock}`}
+                          >
+                            {FLOW_COPY.lowStockBadge}
                           </span>
                         ) : null}
                       </td>
@@ -370,7 +442,7 @@ export function IngredientsPage() {
       <ConfirmDialog
         open={deleteId !== null}
         title="Eliminar ingrediente"
-        message="Si está en una receta, puede que no se pueda borrar."
+        message={FLOW_COPY.ingredientsDeleteConfirm}
         onCancel={() => setDeleteId(null)}
         onConfirm={() => void confirmDelete()}
       />
