@@ -1,4 +1,4 @@
-const TOKEN_KEY = "catering-crm:session-token";
+export const TOKEN_KEY = "catering-crm:session-token";
 
 export function getSessionToken(): string | null {
   try {

@@ -1,7 +1,7 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { getSessionToken } from "./session";
 
-const RUNTIME_KEY = "catering-crm:supabase";
+export const RUNTIME_KEY = "catering-crm:supabase";
 
 export type CloudConfig = { url: string; anonKey: string };
 
