@@ -19,6 +19,7 @@ import { clientMoneyFromQuotes, collectionsThisWeek, quoteMoney } from "../quote
 import { useAuth } from "../components/AuthGate";
 import { canEditQuotes } from "../../shared/roles";
 import { isOpenPurchaseStatus } from "../../shared/procurement";
+import { isLowStock } from "../../shared/flowUsability";
 
 export function HomePage() {
   const { user } = useAuth();
@@ -71,7 +72,7 @@ export function HomePage() {
   );
   const weekDue = useMemo(() => collectionsThisWeek(events, quotes), [events, quotes]);
   const lowStock = useMemo(
-    () => ingredients.filter((i) => (i.minStock ?? 0) > 0 && (i.stockQty ?? 0) <= (i.minStock ?? 0)),
+    () => ingredients.filter((i) => isLowStock(i.stockQty ?? 0, i.minStock ?? 0)),
     [ingredients],
   );
   const zeroStock = useMemo(() => {
@@ -242,8 +243,8 @@ export function HomePage() {
           </p>
           <div className="chip-row" style={{ marginTop: 8 }}>
             {lowStock.slice(0, 12).map((i) => (
-              <Link key={i.id} to="/ingredientes" className="badge tone-warn">
-                {i.name} · {i.stockQty ?? 0}/{i.minStock}
+              <Link key={i.id} to={`/ingredientes?editar=${i.id}`} className="badge tone-warn">
+                {i.name} · hay {i.stockQty ?? 0}, mínimo {i.minStock}
               </Link>
             ))}
           </div>
@@ -254,11 +255,11 @@ export function HomePage() {
         <section className="panel" style={{ marginBottom: 16 }}>
           <h2>Stock en cero</h2>
           <p className="meta">
-            {zeroStock.length} ingrediente(s) sin bodega. La lista de compras los pedirá completos.
+            {zeroStock.length} ingrediente(s) sin stock. La lista de compras los pedirá completos.
           </p>
           <div className="chip-row" style={{ marginTop: 8 }}>
             {zeroStock.slice(0, 12).map((i) => (
-              <Link key={i.id} to="/ingredientes" className="badge tone-warn">
+              <Link key={i.id} to={`/ingredientes?editar=${i.id}`} className="badge tone-warn">
                 {i.name}
               </Link>
             ))}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   api,
@@ -24,6 +24,15 @@ import { sumPayments } from "../../shared/quoteLifecycle";
 import { whatsappPhoneUrl, whatsappTextUrl } from "../whatsapp";
 import { publicQuoteUrl } from "../publicQuote";
 import { useAuth } from "../components/AuthGate";
+import { clearFieldValidity, onFieldInvalid, scrollToId } from "../formValidity";
+import {
+  FLOW_COPY,
+  canAutofillQuoteFromEvent,
+  dueDateOrEventDay,
+  emptyListCopy,
+  quoteCopiedMessage,
+  quoteItemsForSave,
+} from "../../shared/flowUsability";
 import { canEditQuotes } from "../../shared/roles";
 import { addCalendarDays, calendarDay } from "../../shared/quoteOffer";
 import {
@@ -110,6 +119,7 @@ export function QuotesPage() {
     addCalendarDays(new Date(), loadCompanySettings().quoteValidityDays || 15),
   );
   const [linkMsg, setLinkMsg] = useState("");
+  const fillSeq = useRef(0);
   const settings = loadCompanySettings();
 
   const total = useMemo(() => quoteTotal(items), [items]);
@@ -123,9 +133,15 @@ export function QuotesPage() {
       ),
     [quotes, query],
   );
+  const quoteEmpty = emptyListCopy(
+    Boolean(query.trim()),
+    "Sin cotizaciones",
+    FLOW_COPY.quotesEmpty,
+    FLOW_COPY.quotesSearch,
+  );
 
-  async function load() {
-    setLoading(true);
+  async function load(opts?: { silent?: boolean }) {
+    if (!opts?.silent) setLoading(true);
     try {
       const [q, e] = await Promise.all([api.listQuotes(), api.listEvents()]);
       setQuotes(q);
@@ -133,10 +149,11 @@ export function QuotesPage() {
       setError("");
       return q;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error al cargar");
+      setError(err instanceof Error ? err.message : FLOW_COPY.quotesLoad);
+      scrollToId("quote-feedback");
       return [] as QuoteSummary[];
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   }
 
@@ -154,7 +171,8 @@ export function QuotesPage() {
       try {
         await fillFromEventId(Number(fromUrl));
         setPrefillDone(true);
-      } catch {
+      } catch (e) {
+        setError(e instanceof Error ? e.message : FLOW_COPY.quoteCopyFail);
         setPrefillDone(true);
       }
     })();
@@ -190,15 +208,17 @@ export function QuotesPage() {
         ? calendarDay(q.validUntil)
         : addCalendarDays(q.quoteDate, settings.quoteValidityDays || 15),
     );
+    scrollToId("quote-form");
   }
 
   async function createVersion(q: QuoteSummary) {
     try {
       const created = await api.duplicateQuote(q.id);
-      const list = await load();
+      const list = await load({ silent: true });
       const row = list.find((x) => x.id === created.id) ?? created;
       startEdit(row);
       setSaveMsg(`Nueva versión ${created.version} en borrador.`);
+      scrollToId("quote-feedback");
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo crear la versión");
     }
@@ -230,12 +250,17 @@ export function QuotesPage() {
     setItems(q.items.length ? q.items.map((i) => ({ ...i })) : [blankItem()]);
     setDueDate(q.dueDate ? toDatetimeLocal(q.dueDate) : "");
     setValidUntil(addCalendarDays(new Date(), settings.quoteValidityDays || 15));
+    scrollToId("quote-form");
   }
 
   async function fillFromEventId(id: number) {
+    const seq = ++fillSeq.current;
     const ev = await api.getEvent(id);
+    if (seq !== fillSeq.current) return;
     const ingredients = await api.listIngredients();
+    if (seq !== fillSeq.current) return;
     const recipes = await api.listRecipes();
+    if (seq !== fillSeq.current) return;
     const byIng = new Map(ingredients.map((i) => [i.id, i]));
     const forCost = ev.recipes.map((row) => {
       const recipe = recipes.find((r) => r.id === row.recipeId);
@@ -281,26 +306,60 @@ export function QuotesPage() {
         .join("\n"),
     );
     setFoodCost(Math.round(foodCost));
+    setDueDate((current) => dueDateOrEventDay(current, toDatetimeLocal(ev.eventDate)));
+    setError("");
+    setSaveMsg(quoteCopiedMessage(sale > 0));
+    scrollToId("quote-feedback");
   }
 
-  async function fillFromEvent() {
-    if (!eventId) return;
+  async function copyFromEvent(id = Number(eventId)) {
+    if (!id) return;
     try {
-      await fillFromEventId(Number(eventId));
+      await fillFromEventId(id);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "No se pudo rellenar desde el evento");
+      setSaveMsg("");
+      setError(e instanceof Error ? e.message : FLOW_COPY.quoteCopyFail);
+      scrollToId("quote-feedback");
     }
+  }
+
+  function onPickEvent(value: string) {
+    setEventId(value);
+    if (!value) return;
+    const summary = events.find((ev) => String(ev.id) === value);
+    if (summary) {
+      setDueDate((current) => dueDateOrEventDay(current, toDatetimeLocal(summary.eventDate)));
+    }
+    if (
+      !canAutofillQuoteFromEvent({
+        editing: editingId != null,
+        items,
+        notes,
+        paymentCount: payments.length,
+      })
+    ) {
+      return;
+    }
+    void copyFromEvent(Number(value));
   }
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    const prepared = quoteItemsForSave(items);
+    if (prepared.error) {
+      setSaveMsg("");
+      setError(prepared.error);
+      scrollToId("quote-feedback");
+      return;
+    }
     setSaving(true);
+    setError("");
     try {
       const payload = {
         eventId: Number(eventId),
         quoteNumber: quoteNumber.trim() || nextQuoteNumber(quotes),
         quoteDate: new Date(quoteDate).toISOString(),
-        items: items.filter((i) => i.description.trim() && i.quantity > 0),
+        items: prepared.items,
         notes: notes || null,
         status,
         foodCost,
@@ -310,7 +369,7 @@ export function QuotesPage() {
       };
       if (editingId) await api.updateQuote(editingId, payload);
       else await api.createQuote(payload);
-      const q = await load();
+      const q = await load({ silent: true });
       reset(q);
       setSaveMsg(
         status === "aceptada"
@@ -320,7 +379,8 @@ export function QuotesPage() {
             : "Cotización guardada.",
       );
     } catch (err) {
-      setError(err instanceof Error ? err.message : "No se pudo guardar");
+      setError(err instanceof Error ? err.message : FLOW_COPY.quoteSave);
+      scrollToId("quote-feedback");
     } finally {
       setSaving(false);
     }
@@ -332,10 +392,11 @@ export function QuotesPage() {
     try {
       await api.deleteQuote(deleteId);
       setDeleteId(null);
-      const q = await load();
+      const q = await load({ silent: true });
       if (wasEditing) reset(q);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "No se pudo eliminar");
+      setError(err instanceof Error ? err.message : FLOW_COPY.quoteDelete);
+      scrollToId("quote-feedback");
       setDeleteId(null);
     }
   }
@@ -355,16 +416,37 @@ export function QuotesPage() {
         title="Cotizaciones"
         subtitle="Arma la propuesta desde el evento, imprímela o compártela por WhatsApp."
       />
-      {error ? <div className="error-box">{error}</div> : null}
-      {saveMsg ? <p className="meta">{saveMsg}</p> : null}
-      {linkMsg ? <p className="meta">{linkMsg}</p> : null}
+      <div id="quote-feedback">
+        {error ? <div className="error-box">{error}</div> : null}
+        {saveMsg ? <p className="meta">{saveMsg}</p> : null}
+        {linkMsg ? <p className="meta">{linkMsg}</p> : null}
+      </div>
 
       <div className="split">
-        <form className="panel form-grid" onSubmit={onSubmit}>
+        <form
+          id="quote-form"
+          className="panel form-grid"
+          onSubmit={onSubmit}
+          onChange={() => {
+            setSaveMsg("");
+            setError("");
+          }}
+        >
           <h2>{editingId ? "Editar cotización" : "Nueva cotización"}</h2>
-          <FormField label="Evento *">
-            <select value={eventId} onChange={(e) => setEventId(e.target.value)} required>
-              <option value="">Elegir…</option>
+          <FormField
+            label="Evento *"
+            hint={events.length > 0 ? FLOW_COPY.quoteEventHint : undefined}
+          >
+            <select
+              value={eventId}
+              onChange={(e) => {
+                clearFieldValidity(e);
+                onPickEvent(e.target.value);
+              }}
+              onInvalid={onFieldInvalid({ valueMissing: FLOW_COPY.fieldQuoteEvent })}
+              required
+            >
+              <option value="">{events.length === 0 ? "Sin eventos" : "Elige un evento…"}</option>
               {events.map((ev) => (
                 <option key={ev.id} value={ev.id}>
                   {ev.title} — {ev.clientName} — {formatDate(ev.eventDate)}
@@ -372,18 +454,25 @@ export function QuotesPage() {
               ))}
             </select>
           </FormField>
+          {!loading && events.length === 0 ? (
+            <p className="meta">
+              {FLOW_COPY.quoteNoEvents} <Link to="/eventos/nuevo">Crea el evento</Link> y vuelve para cotizar.
+            </p>
+          ) : null}
           <div className="form-actions">
-            <button type="button" className="btn" onClick={() => void fillFromEvent()} disabled={!eventId}>
-              Rellenar desde evento
+            <button
+              type="button"
+              className="btn"
+              title="Reemplaza el ítem y las notas con los datos del evento."
+              onClick={() => void copyFromEvent()}
+              disabled={!eventId}
+            >
+              Copiar datos del evento
             </button>
           </div>
           <div className="grid-3">
-            <FormField label="Número">
-              <input
-                value={quoteNumber}
-                onChange={(e) => setQuoteNumber(e.target.value)}
-                placeholder="COT-2026-001"
-              />
+            <FormField label="Número" hint={FLOW_COPY.quoteNumberHint}>
+              <input value={quoteNumber} onChange={(e) => setQuoteNumber(e.target.value)} />
             </FormField>
             <FormField label="Fecha">
               <input
@@ -419,7 +508,14 @@ export function QuotesPage() {
             label="Válida hasta"
             hint="Después de este día el cliente sigue viendo el enlace, pero ya no puede aceptar ni rechazar."
           >
-            <input type="date" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} required />
+            <input
+              type="date"
+              value={validUntil}
+              onChange={(e) => setValidUntil(e.target.value)}
+              onInput={clearFieldValidity}
+              onInvalid={onFieldInvalid({ valueMissing: FLOW_COPY.fieldQuoteValid })}
+              required
+            />
           </FormField>
           </div>
 
@@ -434,8 +530,12 @@ export function QuotesPage() {
                 Agregar ítem
               </button>
             </div>
+            {items.length === 0 ? (
+              <p className="meta">Agrega al menos un ítem con descripción y cantidad.</p>
+            ) : null}
             {items.map((item, idx) => (
               <div key={idx} className="inline-row" style={{ marginBottom: 8 }}>
+                <div style={{ flex: "2 1 16rem" }}>
                 <FormField label="Descripción">
                   <input
                     value={item.description}
@@ -444,10 +544,10 @@ export function QuotesPage() {
                       next[idx] = { ...item, description: e.target.value };
                       setItems(next);
                     }}
-                    required
                   />
                 </FormField>
-                <FormField label="Cant.">
+                </div>
+                <FormField label="Cantidad">
                   <input
                     type="number"
                     min={0}
@@ -460,7 +560,7 @@ export function QuotesPage() {
                     }}
                   />
                 </FormField>
-                <FormField label="Precio">
+                <FormField label="Precio unitario">
                   <input
                     type="number"
                     min={0}
@@ -476,6 +576,7 @@ export function QuotesPage() {
                 <button
                   type="button"
                   className="btn danger"
+                  style={{ flex: "0 0 auto" }}
                   onClick={() => setItems(items.filter((_, i) => i !== idx))}
                 >
                   Quitar
@@ -629,7 +730,7 @@ export function QuotesPage() {
           {loading ? (
             <div className="loading">Cargando…</div>
           ) : visibleQuotes.length === 0 ? (
-            <EmptyState title="Sin cotizaciones" description="Crea la primera desde un evento." />
+            <EmptyState title={quoteEmpty.title} description={quoteEmpty.description} />
           ) : (
             <div className="list" style={{ marginTop: 12 }}>
               {visibleQuotes.map((q) => {
@@ -659,6 +760,9 @@ export function QuotesPage() {
                   </div>
                   <div className="page-actions">
                     <QuoteBadge status={q.status} />
+                    <button type="button" className="btn primary" onClick={() => startEdit(q)}>
+                      Editar
+                    </button>
                     <a
                       className="btn"
                       href={whatsappQuoteUrl({
@@ -677,21 +781,28 @@ export function QuotesPage() {
                     <Link className="btn" to={`/cotizaciones/${q.id}/imprimir`}>
                       Imprimir / PDF
                     </Link>
+                    <button type="button" className="btn" onClick={() => void copyPublicLink(q)}>
+                      Copiar enlace
+                    </button>
                     {q.publicToken ? (
                       <Link className="btn" to={`/p/${q.publicToken}`}>
                         Ver como cliente
                       </Link>
                     ) : null}
-                    <button type="button" className="btn" onClick={() => void copyPublicLink(q)}>
-                      Copiar link
-                    </button>
-                    <button type="button" className="btn" onClick={() => startEdit(q)}>
-                      Editar
-                    </button>
-                    <button type="button" className="btn" onClick={() => void createVersion(q)}>
+                    <button
+                      type="button"
+                      className="btn"
+                      title={FLOW_COPY.quoteVersion}
+                      onClick={() => void createVersion(q)}
+                    >
                       Nueva versión
                     </button>
-                    <button type="button" className="btn" onClick={() => duplicateQuote(q)}>
+                    <button
+                      type="button"
+                      className="btn"
+                      title={FLOW_COPY.quoteDuplicate}
+                      onClick={() => duplicateQuote(q)}
+                    >
                       Duplicar
                     </button>
                     <button
@@ -713,7 +824,7 @@ export function QuotesPage() {
       <ConfirmDialog
         open={deleteId !== null}
         title="Eliminar cotización"
-        message="Esta acción no se puede deshacer."
+        message={FLOW_COPY.quoteDeleteConfirm}
         onCancel={() => setDeleteId(null)}
         onConfirm={() => void confirmDelete()}
       />

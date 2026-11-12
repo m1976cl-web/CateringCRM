@@ -15,6 +15,8 @@ import { ConfirmDialog } from "../components/ConfirmDialog";
 import { FormField } from "../components/FormField";
 import { PageHeader } from "../components/EmptyState";
 import { QuoteBadge } from "../components/StatusBadge";
+import { clearFieldValidity, onFieldInvalid, scrollToId } from "../formValidity";
+import { FLOW_COPY } from "../../shared/flowUsability";
 import { recipeFitsService } from "../../shared/recipeMeta";
 import { estimateFoodCost } from "../../shared/shopping";
 import { buildEventOperatingResult, isOpenPurchaseStatus } from "../../shared/procurement";
@@ -101,6 +103,7 @@ export function EventDetailPage() {
   const [estimatedCost, setEstimatedCost] = useState("");
   const [menu, setMenu] = useState<MenuRow[]>([]);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(!isNew || Boolean(searchParams.get("duplicar")));
   const [saving, setSaving] = useState(false);
   const [askDelete, setAskDelete] = useState(false);
@@ -115,6 +118,12 @@ export function EventDetailPage() {
   const [askShort, setAskShort] = useState(false);
   const [shortMessage, setShortMessage] = useState("");
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
+
+  function reportError(message: string) {
+    setNotice("");
+    setError(message);
+    scrollToId("event-feedback");
+  }
 
   const fechaParam = searchParams.get("fecha");
   const duplicarParam = searchParams.get("duplicar");
@@ -214,7 +223,7 @@ export function EventDetailPage() {
           setStockConsumed(ev.stockConsumed);
         }
       } catch (e) {
-        if (alive) setError(e instanceof Error ? e.message : "No se pudo cargar");
+        if (alive) reportError(e instanceof Error ? e.message : FLOW_COPY.eventLoad);
       } finally {
         if (alive) setLoading(false);
       }
@@ -248,7 +257,7 @@ export function EventDetailPage() {
     );
     const pick = suitable[0] ?? recipes[0];
     if (!pick) {
-      setError("Primero crea una receta en el módulo Recetas");
+      reportError("No hay recetas. Crea una en Recetas y vuelve para armar el menú.");
       return;
     }
     setMenu((prev) => [
@@ -403,17 +412,17 @@ export function EventDetailPage() {
   ) {
     if (action === "shopping") {
       if (services.length === 0) {
-        setError("Elige al menos un servicio (desayuno, almuerzo…)");
+        reportError("Elige al menos un servicio (desayuno, almuerzo, cena u otro).");
         return;
       }
       if (menu.length === 0) {
-        setError("Agrega recetas al menú antes de generar la lista de compras");
+        reportError("Agrega recetas al menú antes de generar la lista de compras.");
         return;
       }
     }
     if (action === "series") {
       if (!repeatKind || repeatExtra < 1) {
-        setError("Elige cada cuánto se repite y cuántas copias extra.");
+        reportError("Elige cada cuánto se repite y cuántas copias extra.");
         return;
       }
     }
@@ -424,6 +433,7 @@ export function EventDetailPage() {
     }
     setSaving(true);
     setError("");
+    setNotice("");
     let openedShort = false;
     try {
       const payload = { ...buildPayload(), allowShortStock: Boolean(opts?.allowShort) };
@@ -453,9 +463,10 @@ export function EventDetailPage() {
         navigate(`/compras/${eventId}`);
         return;
       }
-      navigate(`/eventos/${eventId}`);
+      setNotice(FLOW_COPY.eventSaved);
+      scrollToId("event-feedback");
     } catch (err) {
-      const message = err instanceof Error ? err.message : "No se pudo guardar";
+      const message = err instanceof Error ? err.message : FLOW_COPY.eventSave;
       if (message.startsWith(STOCK_SHORT_PREFIX)) {
         setShortMessage(message);
         setPendingAction(action);
@@ -463,7 +474,7 @@ export function EventDetailPage() {
         openedShort = true;
         return;
       }
-      setError(message);
+      reportError(message);
     } finally {
       setSaving(false);
       setAskUnpaid(false);
@@ -486,7 +497,7 @@ export function EventDetailPage() {
       await api.deleteEvent(eventId);
       navigate("/eventos");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "No se pudo eliminar");
+      reportError(err instanceof Error ? err.message : "No se pudo eliminar el evento.");
       setAskDelete(false);
     }
   }
@@ -535,7 +546,10 @@ export function EventDetailPage() {
         }
       />
 
-      {error ? <div className="error-box">{error}</div> : null}
+      <div id="event-feedback">
+        {error ? <div className="error-box">{error}</div> : null}
+        {notice ? <p className="meta">{notice}</p> : null}
+      </div>
 
       {!isNew && eventId ? (
         <section className="panel" style={{ marginBottom: 16 }}>
@@ -744,10 +758,23 @@ export function EventDetailPage() {
         </section>
       ) : null}
 
-      <form className="panel form-grid" onSubmit={onSubmit}>
+      <form
+        className="panel form-grid"
+        onSubmit={onSubmit}
+        onChange={() => {
+          setNotice("");
+          setError("");
+        }}
+      >
         <div className="grid-2">
           <FormField label="Título *">
-            <input value={title} onChange={(e) => setTitle(e.target.value)} required />
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              onInput={clearFieldValidity}
+              onInvalid={onFieldInvalid({ valueMissing: FLOW_COPY.fieldEventTitle })}
+              required
+            />
           </FormField>
           <FormField
             label="Cliente *"
@@ -757,8 +784,16 @@ export function EventDetailPage() {
                 : undefined
             }
           >
-            <select value={clientId} onChange={(e) => setClientId(e.target.value)} required>
-              <option value="">{clients.length === 0 ? "Sin clientes" : "Elegir…"}</option>
+            <select
+              value={clientId}
+              onChange={(e) => {
+                clearFieldValidity(e);
+                setClientId(e.target.value);
+              }}
+              onInvalid={onFieldInvalid({ valueMissing: FLOW_COPY.fieldEventClient })}
+              required
+            >
+              <option value="">{clients.length === 0 ? "Sin clientes" : "Elige un cliente…"}</option>
               {clients.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
@@ -779,6 +814,8 @@ export function EventDetailPage() {
               type="datetime-local"
               value={eventDate}
               onChange={(e) => setEventDate(e.target.value)}
+              onInput={clearFieldValidity}
+              onInvalid={onFieldInvalid({ valueMissing: FLOW_COPY.fieldEventDate })}
               required
             />
           </FormField>
@@ -791,6 +828,11 @@ export function EventDetailPage() {
               min={1}
               value={attendees}
               onChange={(e) => setAttendeesAndSync(Number(e.target.value))}
+              onInput={clearFieldValidity}
+              onInvalid={onFieldInvalid({
+                valueMissing: FLOW_COPY.fieldEventAttendees,
+                rangeUnderflow: FLOW_COPY.fieldEventAttendees,
+              })}
               required
             />
           </FormField>
@@ -810,7 +852,7 @@ export function EventDetailPage() {
         </FormField>
 
         <div className="grid-3">
-          <FormField label="Montaje" hint="Hora de llegada / setup">
+          <FormField label="Montaje" hint={FLOW_COPY.setupHint}>
             <input type="time" value={setupTime} onChange={(e) => setSetupTime(e.target.value)} />
           </FormField>
           <FormField label="Servicio">
@@ -1169,7 +1211,7 @@ export function EventDetailPage() {
           </div>
 
           {services.length === 0 ? (
-            <p className="meta">Marca arriba al menos un servicio (desayuno, almuerzo…).</p>
+            <p className="meta">Elige arriba al menos un servicio: desayuno, almuerzo, cena u otro.</p>
           ) : null}
 
           {!recipes.length ? (
@@ -1200,7 +1242,7 @@ export function EventDetailPage() {
 
                   {rows.length === 0 ? (
                     <p className="meta">
-                      Sin recetas en este servicio. Agrega al menos una para incluirlo en compras.
+                      Este servicio todavía no tiene recetas. Agrega una para incluirlo en las compras.
                     </p>
                   ) : (
                     <div className="stack" style={{ gap: 10 }}>

@@ -7,6 +7,7 @@ import { SearchBar } from "../components/SearchBar";
 import { StatusBadge } from "../components/StatusBadge";
 import { matchesQuery } from "../search";
 import { clientMoneyFromQuotes } from "../quoteDisplay";
+import { FLOW_COPY, emptyListCopy, eventListPaymentNote } from "../../shared/flowUsability";
 import {
   EVENT_STATUSES,
   EVENT_STATUS_LABELS,
@@ -32,7 +33,7 @@ export function EventsPage() {
           setQuotes(qs);
         }
       } catch (e) {
-        if (alive) setError(e instanceof Error ? e.message : "Error al cargar eventos");
+        if (alive) setError(e instanceof Error ? e.message : FLOW_COPY.eventsLoad);
       } finally {
         if (alive) setLoading(false);
       }
@@ -48,6 +49,9 @@ export function EventsPage() {
       matchesQuery(query, r.title, r.clientName, r.location, ...r.services.map((s) => SERVICE_TYPE_LABELS[s])),
     );
   }, [rows, filter, query]);
+
+  const filtering = Boolean(query.trim()) || filter !== "todos";
+  const empty = emptyListCopy(filtering, "No hay eventos", FLOW_COPY.eventsEmpty, FLOW_COPY.eventsSearch);
 
   return (
     <div>
@@ -92,28 +96,24 @@ export function EventsPage() {
         <div className="loading">Cargando eventos…</div>
       ) : filtered.length === 0 ? (
         <EmptyState
-          title={query || filter !== "todos" ? "Nada coincide" : "No hay eventos"}
-          description={
-            query || filter !== "todos"
-              ? "Prueba otro filtro o búsqueda."
-              : "Crea un evento y asócialo a un cliente."
-          }
-          actionTo="/eventos/nuevo"
-          actionLabel="Crear evento"
+          title={empty.title}
+          description={empty.description}
+          actionTo={empty.offerCreate ? "/eventos/nuevo" : undefined}
+          actionLabel={empty.offerCreate ? "Crear evento" : undefined}
         />
       ) : (
         <div className="list">
           {filtered.map((ev) => {
             const money = clientMoneyFromQuotes(quotes.filter((q) => q.eventId === ev.id));
+            const payment = eventListPaymentNote(money.billed, money.balance, formatMoney);
             return (
             <Link key={ev.id} to={`/eventos/${ev.id}`} className="list-item">
               <div>
                 <h3>{ev.title}</h3>
                 <div className="meta">
                   {ev.clientName} · {formatDate(ev.eventDate)} · {ev.attendees} personas
-                  {money.billed > 0
-                    ? ` · saldo ${formatMoney(money.balance)}`
-                    : ""}
+                  {ev.location ? ` · ${ev.location}` : ""}
+                  {payment ? ` · ${payment}` : ""}
                 </div>
                 <div className="meta">
                   {ev.services.map((s) => SERVICE_TYPE_LABELS[s]).join(" · ")}
