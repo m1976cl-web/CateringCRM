@@ -9,7 +9,7 @@ export type CompanySettings = {
   ivaRate: number;
 };
 
-const SETTINGS_KEY = "catering-crm:settings";
+export const SETTINGS_KEY = "catering-crm:settings";
 
 const defaultSettings: CompanySettings = {
   companyName: "",

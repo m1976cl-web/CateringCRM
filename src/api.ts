@@ -18,6 +18,7 @@ import type {
   ShoppingListStatus,
   SupplierInput,
 } from "../shared/types";
+import { readBackupCollections, restoreBackupJson, serializeBackup } from "./backup";
 import { local } from "./localStore";
 import { notifyOfflineFallback } from "./offlineBanner";
 import type { PublicQuoteView } from "./publicQuote";
@@ -293,6 +294,11 @@ export function getDataModeLabel(mode: DataMode = getDataMode()): string {
 /** true si se puede borrar todo (local o Supabase). En API Netlify no hay wipe. */
 export function canClearAllData(): boolean {
   return usingSupabase() || STATIC_ONLY;
+}
+
+/** El JSON de respaldo cubre el localStorage de este dispositivo. */
+export function localBackupApplies(mode: DataMode = getDataMode()): boolean {
+  return mode === "static";
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -709,8 +715,13 @@ export const api = {
     );
   },
 
-  exportLocalBackup: (): string => local.exportJson(),
-  importLocalBackup: (json: string): { ok: boolean } => local.importJson(json),
+  exportLocalBackup: (): string =>
+    serializeBackup(readBackupCollections(localStorage), new Date().toISOString()),
+  importLocalBackup: (json: string): { ok: boolean } => {
+    const result = restoreBackupJson(json, localStorage);
+    if (!result.ok) throw new Error(result.error);
+    return { ok: true };
+  },
 };
 
 export function formatDate(value: string | Date): string {
