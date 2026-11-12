@@ -101,9 +101,9 @@ Si no configuras esos secrets, Pages sigue en modo estático local.
 
 ## GitHub Pages (modo estático)
 
-El sitio público es [https://m1976cl-web.github.io/CateringCRM/](https://m1976cl-web.github.io/CateringCRM/). Esa URL redirige a `/app/`, donde vive la SPA. Los enlaces ya guardados (`/CateringCRM/app/…`) y el scope de la PWA siguen ahí. El botón **Probar sin contraseña** está en la pantalla de login.
+El sitio público es [https://m1976cl-web.github.io/CateringCRM/](https://m1976cl-web.github.io/CateringCRM/). Pages publica desde **GitHub Actions**. `/` redirige a `/app/`, donde vive la SPA. Los enlaces ya guardados (`/CateringCRM/app/…`) y el scope de la PWA siguen ahí. El botón **Probar sin contraseña** está en la pantalla de login.
 
-El workflow [`.github/workflows/deploy-pages.yml`](./.github/workflows/deploy-pages.yml) compila y publica un artifact con `actions/upload-pages-artifact` y `actions/deploy-pages`. No vuelve a commitear `app/` en `main` (se acaban los commits `chore: update GitHub Pages static app`).
+Esas URLs las sirve el artifact de [`.github/workflows/deploy-pages.yml`](./.github/workflows/deploy-pages.yml) (`actions/upload-pages-artifact` y `actions/deploy-pages`). `main` no guarda el build.
 
 Variables del build de Pages:
 
@@ -117,18 +117,6 @@ El artifact queda así:
 
 - `index.html` en la raíz: el mismo redirect del repo (en `*.github.io` manda a `app/`)
 - `app/`: el contenido de `dist/` (la SPA, sin ese redirect)
-
-### Origen de Pages (paso manual, una vez)
-
-En el repo, Pages sigue en **Deploy from a branch** (`main` / `/`). Hay que pasarlo a **GitHub Actions** a mano. El orden importa para no dejar el sitio caído:
-
-1. **Merge primero**, con el origen todavía en *Deploy from a branch*. El sitio lo sigue publicando `pages-build-deployment` desde `main` (`index.html` + la carpeta `app/` que ya está en el repo). El job `deploy` ya no lleva `continue-on-error`. Si falla mientras el origen siga siendo la rama, el fallo no quita esa publicación. Si llega a publicar, el artifact usa el mismo redirect en `/` y la misma SPA en `/app/`.
-2. **Después del merge:** **Settings → Pages → Build and deployment → Source: GitHub Actions**. Si GitHub ofrece una plantilla de workflow, no hace falta crearla: este archivo ya está en el repo.
-3. **Enseguida**, en la pestaña Actions, vuelve a ejecutar **Deploy GitHub Pages** (Re-run failed jobs, o Run workflow). Ese run es el que tiene que quedar como publicación vigente.
-
-No pongas el origen en GitHub Actions **antes** del merge. El workflow que hay hoy en `main` sube `dist/` a la raíz del sitio (`VITE_BASE=./`, redirect quitado del HTML). Un deploy de ese artifact mueve la SPA de `/app/` a `/` y rompe los enlaces guardados y el scope de la PWA.
-
-La carpeta `app/` commiteada no se borra aquí. Mientras el origen sea la rama, es lo que mantiene `/app/` en línea. A partir de este cambio deja de actualizarse. Cuando un deploy de Actions esté sirviendo el sitio, un PR aparte puede borrar `app/` de `main`.
 
 Build local de prueba:
 
