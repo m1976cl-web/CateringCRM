@@ -47,6 +47,13 @@ export const FLOW_COPY = {
   fieldQuoteValid: "Indica hasta qué día es válida la cotización.",
   fieldIngredientName: "Escribe el nombre del ingrediente.",
   fieldStockQty: "Indica una cantidad mayor que cero.",
+  quoteMissing: "Esa cotización ya no está.",
+  calendarLoad: "No se pudieron cargar los eventos del calendario. Revisa la conexión e inténtalo de nuevo.",
+  calendarEmptyMonth: "Este mes no tiene eventos. Elige + evento en un día para crear uno con esa fecha.",
+  collectionsNone: "Cuando envíes o aceptes una cotización con saldo, aparece aquí.",
+  collectionsSettled: "Las cotizaciones enviadas o aceptadas están saldadas, o siguen en borrador.",
+  kitchenBuy: "Con el rol de cocina puedes ver la lista, no marcar compras ni recibir órdenes.",
+  shoppingAllBought: "Todo está marcado como comprado.",
 } as const;
 
 export type InvalidFlags = {
@@ -129,6 +136,29 @@ export function quoteCopiedMessage(hasSalePrice: boolean): string {
   return hasSalePrice
     ? "Se copió el evento. El precio sale de la venta estimada o, si no hay, del costo de ingredientes."
     : "Se copió el evento, pero no hay precio todavía. Escríbelo en el ítem antes de guardar.";
+}
+
+export function eventsInMonth(dates: Array<string | Date>, year: number, monthIndex: number): number {
+  let count = 0;
+  for (const value of dates) {
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) continue;
+    if (date.getFullYear() === year && date.getMonth() === monthIndex) count += 1;
+  }
+  return count;
+}
+
+export function collectionsEmptyCopy(hasAnyQuote: boolean): { title: string; description: string } {
+  if (!hasAnyQuote) {
+    return { title: "Sin cotizaciones por cobrar", description: FLOW_COPY.collectionsNone };
+  }
+  return { title: "No hay saldos pendientes", description: FLOW_COPY.collectionsSettled };
+}
+
+export function shoppingPendingLine(total: number, remaining: number): string {
+  if (total <= 0) return "";
+  if (remaining <= 0) return FLOW_COPY.shoppingAllBought;
+  return `${remaining} de ${total} pendiente${remaining === 1 ? "" : "s"}.`;
 }
 
 export function eventListPaymentNote(

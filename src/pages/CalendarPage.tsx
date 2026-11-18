@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, formatDate, isSameCalendarDay, toDateInput, type EventSummary } from "../api";
 import { PageHeader } from "../components/EmptyState";
+import { FLOW_COPY, eventsInMonth } from "../../shared/flowUsability";
 
 const WEEKDAYS = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
 
@@ -22,7 +23,7 @@ export function CalendarPage() {
         const rows = await api.listEvents();
         if (alive) setEvents(rows);
       } catch (e) {
-        if (alive) setError(e instanceof Error ? e.message : "Error al cargar");
+        if (alive) setError(e instanceof Error ? e.message : FLOW_COPY.calendarLoad);
       } finally {
         if (alive) setLoading(false);
       }
@@ -79,7 +80,7 @@ export function CalendarPage() {
     <div>
       <PageHeader
         title="Calendario"
-        subtitle="Vista mensual. Toca “+ evento” en un día para crear uno."
+        subtitle="Vista mensual. Elige + evento en un día para crear uno con esa fecha."
         actions={
           <div className="page-actions">
             <button
@@ -110,8 +111,12 @@ export function CalendarPage() {
       <h2 style={{ textTransform: "capitalize", marginTop: 0 }}>{title}</h2>
       {error ? <div className="error-box">{error}</div> : null}
       {loading ? (
-        <div className="loading">Cargando…</div>
-      ) : (
+        <div className="loading">Cargando calendario…</div>
+      ) : error ? null : (
+        <>
+      {eventsInMonth(events.map((ev) => ev.eventDate), cursor.getFullYear(), cursor.getMonth()) === 0 ? (
+        <p className="meta">{FLOW_COPY.calendarEmptyMonth}</p>
+      ) : null}
         <div className="calendar">
           {WEEKDAYS.map((d) => (
             <div key={d} className="cal-head">
@@ -128,7 +133,12 @@ export function CalendarPage() {
               >
                 <strong>{date.getDate()}</strong>
                 {dayEvents.map((ev) => (
-                  <Link key={ev.id} className="cal-event" to={`/eventos/${ev.id}`} title={formatDate(ev.eventDate)}>
+                  <Link
+                    key={ev.id}
+                    className="cal-event"
+                    to={`/eventos/${ev.id}`}
+                    title={`${ev.clientName} · ${formatDate(ev.eventDate)}`}
+                  >
                     {ev.title}
                   </Link>
                 ))}
@@ -141,6 +151,7 @@ export function CalendarPage() {
             );
           })}
         </div>
+        </>
       )}
     </div>
   );

@@ -4,12 +4,15 @@ import {
   canAutofillQuoteFromEvent,
   dueDateOrEventDay,
   emptyListCopy,
+  collectionsEmptyCopy,
   eventListPaymentNote,
+  eventsInMonth,
   invalidFieldMessage,
   isLowStock,
   isUntouchedQuoteItem,
   quoteCopiedMessage,
   quoteItemsForSave,
+  shoppingPendingLine,
   stockQtyHint,
 } from "./flowUsability";
 
@@ -134,5 +137,24 @@ describe("mensajes y validación", () => {
 
   it("el montaje no mezcla inglés", () => {
     expect(FLOW_COPY.setupHint.toLowerCase()).not.toContain("setup");
+  });
+});
+
+describe("calendario, cobranza y compras", () => {
+  it("cuenta solo los eventos del mes visible", () => {
+    expect(
+      eventsInMonth(["2026-11-13T15:00:00.000Z", "2026-12-01T15:00:00.000Z", "no-es-fecha"], 2026, 10),
+    ).toBe(1);
+  });
+
+  it("distingue cobranza vacía de saldos ya cubiertos", () => {
+    expect(collectionsEmptyCopy(false).title).toBe("Sin cotizaciones por cobrar");
+    expect(collectionsEmptyCopy(true).title).toBe("No hay saldos pendientes");
+  });
+
+  it("dice cuánto falta comprar sin inventar precios", () => {
+    expect(shoppingPendingLine(0, 0)).toBe("");
+    expect(shoppingPendingLine(4, 1)).toBe("1 de 4 pendiente.");
+    expect(shoppingPendingLine(4, 0)).toBe(FLOW_COPY.shoppingAllBought);
   });
 });

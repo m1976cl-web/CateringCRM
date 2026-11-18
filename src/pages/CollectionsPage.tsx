@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, formatDate, formatDateOnly, formatMoney, type QuoteSummary } from "../api";
-import { PageHeader } from "../components/EmptyState";
+import { EmptyState, PageHeader } from "../components/EmptyState";
 import { QuoteBadge } from "../components/StatusBadge";
 import { useAuth } from "../components/AuthGate";
 import { canEditQuotes } from "../../shared/roles";
 import { quoteMoney } from "../quoteDisplay";
 import { loadCompanySettings } from "../settings";
 import { whatsappPhoneUrl, whatsappTextUrl } from "../whatsapp";
+import { collectionsEmptyCopy } from "../../shared/flowUsability";
 
 function followUpText(q: QuoteSummary, balance: number): string {
   const due = q.dueDate ? formatDateOnly(q.dueDate) : null;
@@ -29,15 +30,15 @@ export function CollectionsPage() {
   const [msg, setMsg] = useState("");
   const settings = loadCompanySettings();
 
-  async function load() {
-    setLoading(true);
+  async function load(opts?: { silent?: boolean }) {
+    if (!opts?.silent) setLoading(true);
     try {
       setQuotes(await api.listQuotes());
       setError("");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "No se pudo cargar cobranza");
+      setError(e instanceof Error ? e.message : "No se pudo cargar la cobranza. Revisa la conexión e inténtalo de nuevo.");
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   }
 
@@ -61,6 +62,7 @@ export function CollectionsPage() {
     return due && !Number.isNaN(due.getTime()) && due.getTime() < Date.now();
   });
   const total = rows.reduce((sum, row) => sum + row.money.balance, 0);
+  const emptyCopy = collectionsEmptyCopy(quotes.length > 0);
 
   async function markContacted(id: number) {
     const q = quotes.find((x) => x.id === id);
@@ -79,9 +81,10 @@ export function CollectionsPage() {
         lastContactedAt: new Date().toISOString(),
       });
       setMsg("Marcado como contactado.");
-      await load();
+      await load({ silent: true });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "No se pudo guardar");
+      setMsg("");
+      setError(e instanceof Error ? e.message : "No se pudo marcar el contacto.");
     }
   }
 
@@ -89,7 +92,7 @@ export function CollectionsPage() {
     return (
       <div className="empty">
         <h2>Cobranza</h2>
-        <p>Tu rol no gestiona cobranzas.</p>
+        <p>El rol de cocina no cobra. Revisa eventos y la hoja de producción.</p>
       </div>
     );
   }
@@ -121,12 +124,12 @@ export function CollectionsPage() {
       {loading ? (
         <div className="loading">Cargando…</div>
       ) : rows.length === 0 ? (
-        <section className="panel">
-          <p className="meta" style={{ margin: 0 }}>
-            No hay saldos pendientes. Cuando una cotización enviada o aceptada tenga saldo, aparece
-            aquí.
-          </p>
-        </section>
+        <EmptyState
+          title={emptyCopy.title}
+          description={emptyCopy.description}
+          actionTo="/cotizaciones"
+          actionLabel="Ir a cotizaciones"
+        />
       ) : (
         <div className="list">
           {rows.map(({ q, money }) => {
@@ -149,11 +152,11 @@ export function CollectionsPage() {
                 <div className="page-actions">
                   <QuoteBadge status={q.status} />
                   {isOverdue ? <span className="badge tone-warn">Vencida</span> : null}
-                  <a className="btn" href={wa} target="_blank" rel="noreferrer">
+                  <a className="btn primary" href={wa} target="_blank" rel="noreferrer">
                     WhatsApp
                   </a>
-                  <Link className="btn" to={`/cotizaciones?eventId=${q.eventId}`}>
-                    Ver
+                  <Link className="btn" to={`/cotizaciones?cotizacion=${q.id}`}>
+                    Abrir cotización
                   </Link>
                   <button type="button" className="btn" onClick={() => void markContacted(q.id)}>
                     Contactado

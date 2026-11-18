@@ -95,7 +95,7 @@ function whatsappQuoteUrl(q: {
 
 export function QuotesPage() {
   const { user } = useAuth();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [quotes, setQuotes] = useState<QuoteSummary[]>([]);
   const [events, setEvents] = useState<EventSummary[]>([]);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -164,8 +164,29 @@ export function QuotesPage() {
   }, []);
 
   useEffect(() => {
+    const quoteId = searchParams.get("cotizacion");
+    if (quoteId) {
+      if (loading) return;
+      const row = quotes.find((q) => String(q.id) === quoteId);
+      if (!row) {
+        setError(FLOW_COPY.quoteMissing);
+      } else {
+        startEdit(row);
+      }
+      setPrefillDone(true);
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.delete("cotizacion");
+          return next;
+        },
+        { replace: true },
+      );
+      return;
+    }
+    if (prefillDone) return;
     const fromUrl = searchParams.get("eventId");
-    if (!fromUrl || prefillDone || events.length === 0) return;
+    if (!fromUrl || events.length === 0) return;
     setEventId(fromUrl);
     void (async () => {
       try {
@@ -176,7 +197,7 @@ export function QuotesPage() {
         setPrefillDone(true);
       }
     })();
-  }, [searchParams, events, prefillDone]);
+  }, [searchParams, events, quotes, loading, prefillDone, setSearchParams]);
 
   function reset(list: QuoteSummary[] = quotes) {
     setEditingId(null);
