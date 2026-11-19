@@ -15,6 +15,7 @@ import { canEditPrices } from "../../shared/roles";
 import { PURCHASE_ORDER_STATUS_LABELS } from "../../shared/procurement";
 import { SERVICE_TYPE_LABELS } from "../../shared/types";
 import { whatsappPhoneUrl, whatsappTextUrl } from "../whatsapp";
+import { FLOW_COPY, shoppingPendingLine } from "../../shared/flowUsability";
 
 function shoppingText(
   title: string,
@@ -70,7 +71,7 @@ export function ShoppingPage() {
         setSuppliers(supplierRows);
         if (!selectedId && rows[0]) setSelectedId(String(rows[0].id));
       } catch (e) {
-        if (alive) setError(e instanceof Error ? e.message : "Error al cargar eventos");
+        if (alive) setError(e instanceof Error ? e.message : "No se pudieron cargar los eventos de compras.");
       } finally {
         if (alive) setLoading(false);
       }
@@ -95,6 +96,8 @@ export function ShoppingPage() {
     let alive = true;
     (async () => {
       setBusy(true);
+      setList(null);
+      setEmptyMenu(false);
       try {
         const detail = await api.getEvent(Number(selectedId));
         if (!alive) return;
@@ -117,7 +120,7 @@ export function ShoppingPage() {
           setError("");
         }
       } catch (e) {
-        if (alive) setError(e instanceof Error ? e.message : "No se pudo cargar la lista");
+        if (alive) setError(e instanceof Error ? e.message : "No se pudo cargar la lista de compras.");
       } finally {
         if (alive) setBusy(false);
       }
@@ -179,7 +182,7 @@ export function ShoppingPage() {
       setOrders(orderRows);
       setError("");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "No se pudo regenerar");
+      setError(e instanceof Error ? e.message : "No se pudo regenerar la lista desde el menú.");
     } finally {
       setBusy(false);
     }
@@ -195,7 +198,7 @@ export function ShoppingPage() {
       });
       setList(updated);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "No se pudo actualizar");
+      setError(e instanceof Error ? e.message : "No se pudo marcar el ítem.");
     }
   }
 
@@ -209,7 +212,7 @@ export function ShoppingPage() {
       });
       setList(updated);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "No se pudo actualizar");
+      setError(e instanceof Error ? e.message : "No se pudo marcar todo como comprado.");
     } finally {
       setBusy(false);
     }
@@ -223,7 +226,7 @@ export function ShoppingPage() {
       setOrders(await api.listPurchaseOrders(Number(selectedId)));
       setError("");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "No se pudo crear la orden");
+      setError(e instanceof Error ? e.message : "No se pudo crear la orden con lo pendiente.");
     } finally {
       setBusy(false);
     }
@@ -249,7 +252,7 @@ export function ShoppingPage() {
       setOrders(orderRows);
       setError("");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "No se pudo recibir la orden");
+      setError(e instanceof Error ? e.message : "No se pudo recibir la orden en bodega.");
     } finally {
       setBusy(false);
     }
@@ -262,7 +265,7 @@ export function ShoppingPage() {
       setOrders(await api.listPurchaseOrders(Number(selectedId)));
       setError("");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "No se pudo cancelar la orden");
+      setError(e instanceof Error ? e.message : "No se pudo anular la orden.");
     } finally {
       setBusy(false);
     }
@@ -275,7 +278,7 @@ export function ShoppingPage() {
     <div>
       <PageHeader
         title="Lista de compras"
-        subtitle="Se calcula desde el menú del evento: cantidad de la receta × (porciones del evento ÷ rendimiento)."
+        subtitle="Sale del menú del evento, ya escalada a las porciones de cada receta."
         actions={
           <div className="page-actions">
             {list && list.items.length > 0 ? (
@@ -313,14 +316,16 @@ export function ShoppingPage() {
                 Crear orden con lo pendiente
               </button>
             ) : null}
-            <button
-              type="button"
-              className="btn"
-              disabled={!list || busy}
-              onClick={() => void markAllDone()}
-            >
-              Marcar todo comprado
-            </button>
+            {canBuy ? (
+              <button
+                type="button"
+                className="btn"
+                disabled={!list || busy}
+                onClick={() => void markAllDone()}
+              >
+                Marcar todo como comprado
+              </button>
+            ) : null}
           </div>
         }
       />
@@ -337,15 +342,16 @@ export function ShoppingPage() {
               {menuCount ? ` · ${menuCount} receta(s) en menú` : ""}
             </p>
             <p className="meta" style={{ marginTop: 6 }}>
-              Las cantidades ya están escaladas al número de porciones de cada receta en el evento.
               Si cambias el menú, pulsa <strong>Regenerar desde el menú</strong>.
+              {!canBuy ? ` ${FLOW_COPY.kitchenBuy}` : ""}
             </p>
           </div>
         ) : null}
       </div>
 
       {error ? <div className="error-box">{error}</div> : null}
-      {loading || busy ? <div className="loading">Cargando lista…</div> : null}
+      {(loading || busy) && !list && !emptyMenu ? <div className="loading">Cargando lista…</div> : null}
+      {busy && list ? <p className="meta">Actualizando la lista…</p> : null}
 
       {!loading && !selectedId ? (
         <EmptyState
@@ -356,7 +362,7 @@ export function ShoppingPage() {
         />
       ) : null}
 
-      {!loading && !busy && emptyMenu && selectedId ? (
+      {!loading && emptyMenu && selectedId ? (
         <EmptyState
           title="Este evento aún no tiene menú"
           description="Agrega recetas por servicio (desayuno, almuerzo…) y vuelve a generar la lista de compras."
@@ -365,7 +371,7 @@ export function ShoppingPage() {
         />
       ) : null}
 
-      {list && !busy && !emptyMenu ? (
+      {list && !emptyMenu ? (
         list.items.length === 0 ? (
           <EmptyState
             title="Lista vacía"
@@ -376,7 +382,7 @@ export function ShoppingPage() {
         ) : (
           <div className="stack">
             <p className="meta">
-              Agrupado por proveedor · {list.items.length} ítem(s) · {remaining} pendiente(s)
+              Agrupado por proveedor · {list.items.length} ítem(s) · {shoppingPendingLine(list.items.length, remaining)}
               {estimate > 0 ? ` · estimado ${formatMoney(estimate)}` : ""} · generada{" "}
               {formatDate(list.generatedAt)}
             </p>
@@ -442,7 +448,9 @@ export function ShoppingPage() {
             Una orden por proveedor con lo que aún no está comprado. Al recibirla puedes anotar el número de factura.
           </p>
           {orders.length === 0 ? (
-            <p className="meta">Todavía no hay órdenes para este evento.</p>
+            <p className="meta">
+              Todavía no hay órdenes. Con ítems pendientes, usa <strong>Crear orden con lo pendiente</strong>.
+            </p>
           ) : (
             orders.map((order) => (
               <article key={order.id} style={{ marginTop: 16 }}>
@@ -496,7 +504,7 @@ export function ShoppingPage() {
                     </div>
                     <div className="page-actions">
                       <button className="btn primary" type="submit" disabled={busy}>
-                        Recibir
+                        Recibir en bodega
                       </button>
                       <button
                         className="btn"
@@ -504,7 +512,7 @@ export function ShoppingPage() {
                         disabled={busy}
                         onClick={() => void cancelOrder(order.id)}
                       >
-                        Cancelar orden
+                        Anular orden
                       </button>
                     </div>
                   </form>
@@ -531,7 +539,7 @@ function FormSelect({
     <label className="field">
       <span className="field-label">Evento</span>
       <select value={selectedId} onChange={(e) => onChange(e.target.value)}>
-        <option value="">Elegir evento…</option>
+        <option value="">{events.length === 0 ? "Sin eventos" : "Elige un evento…"}</option>
         {events.map((ev) => (
           <option key={ev.id} value={ev.id}>
             {ev.title} — {formatDate(ev.eventDate)}

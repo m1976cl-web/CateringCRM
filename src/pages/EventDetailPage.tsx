@@ -525,7 +525,7 @@ export function EventDetailPage() {
     <div>
       <PageHeader
         title={isNew ? "Nuevo evento" : "Editar evento"}
-        subtitle="Elige los servicios del día, arma el menú por servicio y genera la lista de compras."
+        subtitle="Título, cliente, fecha y menú van primero. Lugar, horarios y gastos quedan más abajo."
         actions={
           !isNew && eventId ? (
             <>
@@ -606,8 +606,8 @@ export function EventDetailPage() {
               {latestQuote ? (
                 <span className="page-actions">
                   <QuoteBadge status={latestQuote.status} />
-                  <Link className="btn" to={`/cotizaciones?eventId=${eventId}`}>
-                    Ver
+                  <Link className="btn" to={`/cotizaciones?cotizacion=${latestQuote.id}`}>
+                    Abrir cotización
                   </Link>
                 </span>
               ) : (
@@ -847,6 +847,207 @@ export function EventDetailPage() {
           </FormField>
         </div>
 
+        <div>
+          <div className="field-label" style={{ marginBottom: 8 }}>
+            Servicios del evento *
+          </div>
+          <div className="chips">
+            {SERVICE_TYPES.map((s) => (
+              <button
+                key={s}
+                type="button"
+                className={`chip ${services.includes(s) ? "on" : ""}`}
+                onClick={() => toggleService(s)}
+              >
+                {SERVICE_TYPE_LABELS[s]}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <section className="menu-planner">
+          <div className="page-header" style={{ marginBottom: 12 }}>
+            <div>
+              <h2 style={{ margin: 0, fontSize: "1.15rem" }}>Planificar menú</h2>
+              <p className="meta" style={{ margin: "6px 0 0" }}>
+                Para cada servicio, elige recetas y porciones (por defecto = asistentes).
+              </p>
+            </div>
+            {menu.length > 0 ? (
+              <button type="button" className="btn ghost" onClick={syncAllPortions}>
+                Porciones = {attendees} asistentes
+              </button>
+            ) : null}
+          </div>
+
+          {services.length === 0 ? (
+            <p className="meta">Elige arriba al menos un servicio: desayuno, almuerzo, cena u otro.</p>
+          ) : null}
+
+          {!recipes.length ? (
+            <div className="empty-inline">
+              <p className="meta">
+                No hay recetas todavía.{" "}
+                <Link to="/recetas">Crear recetas</Link> con ingredientes y rendimiento.
+              </p>
+            </div>
+          ) : null}
+
+          <div className="stack">
+            {services.map((service) => {
+              const rows = menuByService.get(service) ?? [];
+              return (
+                <div key={service} className="service-block">
+                  <div className="service-block-head">
+                    <h3>{SERVICE_TYPE_LABELS[service]}</h3>
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={!recipes.length}
+                      onClick={() => addRecipeToService(service)}
+                    >
+                      Agregar receta
+                    </button>
+                  </div>
+
+                  {rows.length === 0 ? (
+                    <p className="meta">
+                      Este servicio todavía no tiene recetas. Agrega una para incluirlo en las compras.
+                    </p>
+                  ) : (
+                    <div className="stack" style={{ gap: 10 }}>
+                      {rows.map((row) => {
+                        const recipe = recipes.find((r) => r.id === row.recipeId);
+                        const options = recipes.filter(
+                          (r) =>
+                            r.id === row.recipeId ||
+                            recipeFitsService(r.suitableServices, service),
+                        );
+                        const list = options.length ? options : recipes;
+                        const scale =
+                          recipe && recipe.yieldPortions > 0
+                            ? row.portions / recipe.yieldPortions
+                            : 1;
+                        const conflicts = recipe
+                          ? recipeConflicts(recipe.allergenTags ?? [], dietaryTags)
+                          : [];
+                        return (
+                          <div key={row.key} className="menu-row">
+                            <FormField label="Receta">
+                              <select
+                                value={row.recipeId}
+                                onChange={(e) =>
+                                  updateMenuRow(row.key, {
+                                    recipeId: Number(e.target.value),
+                                  })
+                                }
+                              >
+                                {list.map((r) => (
+                                  <option key={r.id} value={r.id}>
+                                    {r.name}
+                                    {r.category ? ` (${r.category})` : ""} — rinde{" "}
+                                    {r.yieldPortions}
+                                  </option>
+                                ))}
+                              </select>
+                            </FormField>
+                            {conflicts.length ? (
+                              <p className="error-inline" style={{ margin: "0 0 8px" }}>
+                                Conflicto con dieta del evento:{" "}
+                                {conflicts.map((t) => DIETARY_TAG_LABELS[t]).join(", ")}
+                              </p>
+                            ) : null}
+                            <FormField
+                              label="Porciones"
+                              hint={
+                                row.syncAttendees
+                                  ? "Sigue a los asistentes"
+                                  : "Fijada a mano"
+                              }
+                            >
+                              <input
+                                type="number"
+                                min={1}
+                                value={row.portions}
+                                onChange={(e) =>
+                                  updateMenuRow(row.key, {
+                                    portions: Math.max(1, Number(e.target.value)),
+                                    syncAttendees: false,
+                                  })
+                                }
+                              />
+                            </FormField>
+                            <div className="menu-row-meta">
+                              <span className="meta">
+                                Escala ×{scale.toFixed(2)}
+                                {recipe
+                                  ? ` (base ${recipe.yieldPortions} → ${row.portions})`
+                                  : ""}
+                              </span>
+                              <div className="page-actions">
+                                {!row.syncAttendees ? (
+                                  <button
+                                    type="button"
+                                    className="btn ghost"
+                                    onClick={() =>
+                                      updateMenuRow(row.key, {
+                                        portions: attendees,
+                                        syncAttendees: true,
+                                      })
+                                    }
+                                  >
+                                    = asistentes
+                                  </button>
+                                ) : null}
+                                <button
+                                  type="button"
+                                  className="btn danger"
+                                  onClick={() => removeMenuRow(row.key)}
+                                >
+                                  Quitar
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="menu-summary">
+            <strong>
+              Para {attendees} persona{attendees === 1 ? "" : "s"}
+            </strong>
+            <span className="meta">
+              {summaryParts.length ? summaryParts.join(" · ") : "Sin servicios"}
+              {menu.length > 0 ? " → listo para generar compras" : ""}
+            </span>
+          </div>
+        </section>
+
+        <div className="form-actions">
+          <button className="btn primary" type="submit" disabled={saving}>
+            {saving
+              ? "Guardando…"
+              : isNew && repeatKind
+                ? "Guardar serie"
+                : "Guardar evento"}
+          </button>
+          <button
+            type="button"
+            className="btn accent"
+            disabled={saving}
+            onClick={() => void saveAndGenerateShopping()}
+          >
+            {saving ? "Generando…" : "Generar lista de compras"}
+          </button>
+        </div>
+        <p className="meta">Lugar, horarios, packing y gastos siguen más abajo. También puedes guardar al final.</p>
+
         <FormField label="Lugar">
           <input value={location} onChange={(e) => setLocation(e.target.value)} />
         </FormField>
@@ -904,24 +1105,6 @@ export function EventDetailPage() {
               />
             </FormField>
           ) : null}
-        </div>
-
-        <div>
-          <div className="field-label" style={{ marginBottom: 8 }}>
-            Servicios del evento *
-          </div>
-          <div className="chips">
-            {SERVICE_TYPES.map((s) => (
-              <button
-                key={s}
-                type="button"
-                className={`chip ${services.includes(s) ? "on" : ""}`}
-                onClick={() => toggleService(s)}
-              >
-                {SERVICE_TYPE_LABELS[s]}
-              </button>
-            ))}
-          </div>
         </div>
 
         <FormField label="Restricciones alimentarias">
@@ -1193,170 +1376,6 @@ export function EventDetailPage() {
           >
             Agregar persona
           </button>
-        </section>
-
-        <section className="menu-planner">
-          <div className="page-header" style={{ marginBottom: 12 }}>
-            <div>
-              <h2 style={{ margin: 0, fontSize: "1.15rem" }}>Planificar menú</h2>
-              <p className="meta" style={{ margin: "6px 0 0" }}>
-                Para cada servicio, elige recetas y porciones (por defecto = asistentes).
-              </p>
-            </div>
-            {menu.length > 0 ? (
-              <button type="button" className="btn ghost" onClick={syncAllPortions}>
-                Porciones = {attendees} asistentes
-              </button>
-            ) : null}
-          </div>
-
-          {services.length === 0 ? (
-            <p className="meta">Elige arriba al menos un servicio: desayuno, almuerzo, cena u otro.</p>
-          ) : null}
-
-          {!recipes.length ? (
-            <div className="empty-inline">
-              <p className="meta">
-                No hay recetas todavía.{" "}
-                <Link to="/recetas">Crear recetas</Link> con ingredientes y rendimiento.
-              </p>
-            </div>
-          ) : null}
-
-          <div className="stack">
-            {services.map((service) => {
-              const rows = menuByService.get(service) ?? [];
-              return (
-                <div key={service} className="service-block">
-                  <div className="service-block-head">
-                    <h3>{SERVICE_TYPE_LABELS[service]}</h3>
-                    <button
-                      type="button"
-                      className="btn"
-                      disabled={!recipes.length}
-                      onClick={() => addRecipeToService(service)}
-                    >
-                      Agregar receta
-                    </button>
-                  </div>
-
-                  {rows.length === 0 ? (
-                    <p className="meta">
-                      Este servicio todavía no tiene recetas. Agrega una para incluirlo en las compras.
-                    </p>
-                  ) : (
-                    <div className="stack" style={{ gap: 10 }}>
-                      {rows.map((row) => {
-                        const recipe = recipes.find((r) => r.id === row.recipeId);
-                        const options = recipes.filter(
-                          (r) =>
-                            r.id === row.recipeId ||
-                            recipeFitsService(r.suitableServices, service),
-                        );
-                        const list = options.length ? options : recipes;
-                        const scale =
-                          recipe && recipe.yieldPortions > 0
-                            ? row.portions / recipe.yieldPortions
-                            : 1;
-                        const conflicts = recipe
-                          ? recipeConflicts(recipe.allergenTags ?? [], dietaryTags)
-                          : [];
-                        return (
-                          <div key={row.key} className="menu-row">
-                            <FormField label="Receta">
-                              <select
-                                value={row.recipeId}
-                                onChange={(e) =>
-                                  updateMenuRow(row.key, {
-                                    recipeId: Number(e.target.value),
-                                  })
-                                }
-                              >
-                                {list.map((r) => (
-                                  <option key={r.id} value={r.id}>
-                                    {r.name}
-                                    {r.category ? ` (${r.category})` : ""} — rinde{" "}
-                                    {r.yieldPortions}
-                                  </option>
-                                ))}
-                              </select>
-                            </FormField>
-                            {conflicts.length ? (
-                              <p className="error-inline" style={{ margin: "0 0 8px" }}>
-                                Conflicto con dieta del evento:{" "}
-                                {conflicts.map((t) => DIETARY_TAG_LABELS[t]).join(", ")}
-                              </p>
-                            ) : null}
-                            <FormField
-                              label="Porciones"
-                              hint={
-                                row.syncAttendees
-                                  ? "Sigue a los asistentes"
-                                  : "Fijada a mano"
-                              }
-                            >
-                              <input
-                                type="number"
-                                min={1}
-                                value={row.portions}
-                                onChange={(e) =>
-                                  updateMenuRow(row.key, {
-                                    portions: Math.max(1, Number(e.target.value)),
-                                    syncAttendees: false,
-                                  })
-                                }
-                              />
-                            </FormField>
-                            <div className="menu-row-meta">
-                              <span className="meta">
-                                Escala ×{scale.toFixed(2)}
-                                {recipe
-                                  ? ` (base ${recipe.yieldPortions} → ${row.portions})`
-                                  : ""}
-                              </span>
-                              <div className="page-actions">
-                                {!row.syncAttendees ? (
-                                  <button
-                                    type="button"
-                                    className="btn ghost"
-                                    onClick={() =>
-                                      updateMenuRow(row.key, {
-                                        portions: attendees,
-                                        syncAttendees: true,
-                                      })
-                                    }
-                                  >
-                                    = asistentes
-                                  </button>
-                                ) : null}
-                                <button
-                                  type="button"
-                                  className="btn danger"
-                                  onClick={() => removeMenuRow(row.key)}
-                                >
-                                  Quitar
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="menu-summary">
-            <strong>
-              Para {attendees} persona{attendees === 1 ? "" : "s"}
-            </strong>
-            <span className="meta">
-              {summaryParts.length ? summaryParts.join(" · ") : "Sin servicios"}
-              {menu.length > 0 ? " → listo para generar compras" : ""}
-            </span>
-          </div>
         </section>
 
         <div className="form-actions">
